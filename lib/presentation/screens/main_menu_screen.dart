@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/audio_service.dart';
 import 'package:harita/core/localization/app_localizations.dart';
+import 'package:harita/core/localization/locale_service.dart';
 import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
@@ -42,94 +43,126 @@ class MainMenuScreen extends ConsumerWidget {
     final hasSaveAsync = ref.watch(_hasSaveProvider);
 
     return Scaffold(
-      backgroundColor: AppTheme.kBackground,
-      body: localeServiceAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
-        data: (localeService) {
-          final t = localeService.of(locale);
-          return SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final isTablet = constraints.maxWidth >= 600;
-                return SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight,
+      backgroundColor: const Color(0xFF061431),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Africa from space (NASA Blue Marble), darkened so the menu reads.
+          Image.asset(
+            'assets/images/africa_satellite.jpg',
+            key: const Key('menu_satellite'),
+            fit: BoxFit.cover,
+            alignment: const Alignment(0, -0.2),
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0x99000000),
+                  Color(0x66000000),
+                  Color(0xCC000000),
+                ],
+              ),
+            ),
+          ),
+          _menuBody(ref, locale, localeServiceAsync, hasSaveAsync),
+        ],
+      ),
+    );
+  }
+
+  Widget _menuBody(
+    WidgetRef ref,
+    Locale locale,
+    AsyncValue<LocaleService> localeServiceAsync,
+    AsyncValue<bool> hasSaveAsync,
+  ) {
+    return localeServiceAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Error: $e')),
+      data: (localeService) {
+        final t = localeService.of(locale);
+        return SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isTablet = constraints.maxWidth >= 600;
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 80.0 : 32.0,
+                      vertical: 32.0,
                     ),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isTablet ? 80.0 : 32.0,
-                        vertical: 32.0,
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // ── App title ───────────────────────────────────
-                          _AppTitle(title: t.appName),
-                          const SizedBox(height: 48),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // ── App title ───────────────────────────────────
+                        _AppTitle(title: t.appName),
+                        const SizedBox(height: 48),
 
-                          // ── Language toggle ─────────────────────────────
-                          _LanguageToggle(
-                            currentLocale: locale,
-                            onLocaleSelected: (l) {
-                              ref
-                                  .read(audioServiceProvider)
-                                  .playSfx(AudioService.sfxButtonTap);
-                              ref.read(localeProvider.notifier).setLocale(l);
-                            },
-                          ),
-                          const SizedBox(height: 40),
+                        // ── Language toggle ─────────────────────────────
+                        _LanguageToggle(
+                          currentLocale: locale,
+                          onLocaleSelected: (l) {
+                            ref
+                                .read(audioServiceProvider)
+                                .playSfx(AudioService.sfxButtonTap);
+                            ref.read(localeProvider.notifier).setLocale(l);
+                          },
+                        ),
+                        const SizedBox(height: 40),
 
-                          // ── New Game button ─────────────────────────────
-                          _MenuButton(
-                            icon: Icons.play_arrow_rounded,
-                            label: t.btnNewGame,
-                            color: AppTheme.army1Primary,
-                            onPressed: () => _startNewGame(context, ref),
-                          ),
-                          const SizedBox(height: 16),
+                        // ── New Game button ─────────────────────────────
+                        _MenuButton(
+                          icon: Icons.play_arrow_rounded,
+                          label: t.btnNewGame,
+                          color: AppTheme.army1Primary,
+                          onPressed: () => _startNewGame(context, ref),
+                        ),
+                        const SizedBox(height: 16),
 
-                          // ── Resume button (conditional) ─────────────────
-                          hasSaveAsync.when(
-                            loading: () => const SizedBox(height: 16),
-                            error: (_, __) => const SizedBox.shrink(),
-                            data: (hasSave) => hasSave
-                                ? Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      _MenuButton(
-                                        icon: Icons.restore_rounded,
-                                        label: t.btnResume,
-                                        color: AppTheme.kAccentGreen,
-                                        onPressed: () =>
-                                            _resumeGame(context, ref),
-                                      ),
-                                      const SizedBox(height: 16),
-                                    ],
-                                  )
-                                : const SizedBox.shrink(),
-                          ),
+                        // ── Resume button (conditional) ─────────────────
+                        hasSaveAsync.when(
+                          loading: () => const SizedBox(height: 16),
+                          error: (_, __) => const SizedBox.shrink(),
+                          data: (hasSave) => hasSave
+                              ? Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _MenuButton(
+                                      icon: Icons.restore_rounded,
+                                      label: t.btnResume,
+                                      color: AppTheme.kAccentGreen,
+                                      onPressed: () =>
+                                          _resumeGame(context, ref),
+                                    ),
+                                    const SizedBox(height: 16),
+                                  ],
+                                )
+                              : const SizedBox.shrink(),
+                        ),
 
-                          // ── Tutorial button ─────────────────────────────
-                          _MenuButton(
-                            icon: Icons.school_rounded,
-                            label: t.btnTutorial,
-                            color: AppTheme.kAccentPurple,
-                            onPressed: () => _openTutorial(context, ref),
-                          ),
-                        ],
-                      ),
+                        // ── Tutorial button ─────────────────────────────
+                        _MenuButton(
+                          icon: Icons.school_rounded,
+                          label: t.btnTutorial,
+                          color: AppTheme.kAccentPurple,
+                          onPressed: () => _openTutorial(context, ref),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              },
-            ),
-          );
-        },
-      ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -199,7 +232,7 @@ class MainMenuScreen extends ConsumerWidget {
 
 // ─── Private widgets ─────────────────────────────────────────────────────────
 
-/// Animated app title with a drop shadow and a playful scale effect.
+/// App title in white over the satellite picture, slowly breathing.
 class _AppTitle extends StatefulWidget {
   const _AppTitle({required this.title});
 
@@ -219,11 +252,11 @@ class _AppTitleState extends State<_AppTitle>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 2400),
     )..repeat(reverse: true);
     _scale = Tween<double>(
       begin: 1.0,
-      end: 1.04,
+      end: 1.015,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
@@ -241,13 +274,10 @@ class _AppTitleState extends State<_AppTitle>
         widget.title,
         textAlign: TextAlign.center,
         style: AppTheme.displayStyle.copyWith(
-          color: AppTheme.army1Primary,
-          shadows: [
-            Shadow(
-              color: AppTheme.army1Primary.withAlpha(80),
-              offset: const Offset(0, 4),
-              blurRadius: 8,
-            ),
+          color: Colors.white,
+          letterSpacing: 1.2,
+          shadows: const [
+            Shadow(color: Colors.black, offset: Offset(0, 3), blurRadius: 10),
           ],
         ),
       ),

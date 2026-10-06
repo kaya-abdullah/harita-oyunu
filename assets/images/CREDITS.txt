@@ -2,3 +2,9 @@ nuke_badger.jpg — "Operation Upshot-Knothole, Badger shot" (1953), Nevada Test
 Photo: U.S. Department of Energy / National Nuclear Security Administration
 Nevada Site Office. Public domain (work of the U.S. federal government).
 Source: https://commons.wikimedia.org/wiki/File:Operation_Upshot-Knothole_-_Badger_001.jpg
+
+africa_satellite.jpg — NASA Blue Marble: Next Generation, "world.topo.bathy.200412"
+(topography and bathymetry, December 2004), cropped to Africa and resized.
+Imagery: NASA Earth Observatory / Reto Stöckli, NASA Goddard Space Flight Center.
+Public domain (NASA). Source: https://visibleearth.nasa.gov/images/73909
+Regenerate with: python3 tool/generate_africa_map.py <world.topo.bathy.200412.3x21600x10800.jpg>

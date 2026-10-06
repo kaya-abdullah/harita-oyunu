@@ -218,6 +218,10 @@ class AppStrings {
   String goldMineCaptured({required String count}) =>
       _t('gold_mine_captured', p: {'count': count});
   String get goldMineLabel => _t('gold_mine_label');
+  String get terrainLabel => _t('terrain_label');
+
+  /// Name of a terrain, e.g. `strings.terrainName('rainforest')`.
+  String terrainName(String terrain) => _t('terrain_$terrain');
   String get botCountTitle => _t('bot_count_title');
   String get btnStart => _t('btn_start');
   String get youLabel => _t('you_label');

@@ -87,6 +87,48 @@ void main() {
     expect(cairo.dy, inInclusiveRange(ys.reduce(min), ys.reduce(max)));
   });
 
+  test('terrain follows the real continent (forests, deserts)', () {
+    expect(graph.terrains, hasLength(kTerritoryCount));
+    Map<Terrain, int> count(String region) {
+      final m = <Terrain, int>{};
+      for (final t in graph.territories.where((t) => t.name == region)) {
+        final k = graph.terrainOf(t.id);
+        m[k] = (m[k] ?? 0) + 1;
+      }
+      return m;
+    }
+
+    Terrain mostly(String region) =>
+        count(region).entries.reduce((a, b) => b.value > a.value ? b : a).key;
+
+    expect(mostly('region_congo'), Terrain.rainforest);
+    expect(mostly('region_gabon'), Terrain.rainforest);
+    expect(mostly('region_libya'), Terrain.desert);
+    expect(mostly('region_algeria'), Terrain.desert);
+    expect(mostly('region_zambia'), Terrain.woodland);
+    for (final t in Terrain.values) {
+      expect(graph.terrains, contains(t));
+    }
+  });
+
+  test('the satellite picture covers the grid with the right shape', () {
+    final file = File('assets/images/africa_satellite.jpg');
+    expect(file.existsSync(), isTrue);
+    expect(graph.satelliteMargin, greaterThan(0));
+    final rect = graph.satelliteRect;
+    expect(rect.left, lessThan(0));
+    expect(rect.right, greaterThan(graph.width));
+    // JPEG size from the SOF0 header.
+    final bytes = file.readAsBytesSync();
+    var i = 2;
+    while (bytes[i + 1] != 0xC0 && bytes[i + 1] != 0xC2) {
+      i += 2 + (bytes[i + 2] << 8 | bytes[i + 3]);
+    }
+    final h = bytes[i + 5] << 8 | bytes[i + 6];
+    final w = bytes[i + 7] << 8 | bytes[i + 8];
+    expect(w / h, closeTo(rect.width / rect.height, 0.01));
+  });
+
   test('seven distinct start bases: you plus up to six bots', () {
     expect(graph.startIds, hasLength(kMaxBots + 1));
     expect(graph.startIds.toSet(), hasLength(kMaxBots + 1));

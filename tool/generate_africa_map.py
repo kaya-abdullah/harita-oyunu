@@ -9,25 +9,42 @@ diamond mines, and 4-neighbour adjacency is computed (Madagascar is linked to
 the mainland by a single sea bridge).
 
 The country outlines are also exported in map world units so the game can
-draw a normal-looking Africa (smooth coast and borders) under the tiles.
+draw borders over the satellite picture.
+
+The map background is NASA's Blue Marble (topography + bathymetry, Dec 2004,
+public domain). It is plate carrée like this map, so a crop of it lines up
+with the tiles exactly. Each tile's terrain (rain forest / savanna /
+steppe / desert) is read from the picture's colours — it is shown to the
+player but does not change the game.
 
 Writes:
   assets/maps/territory_graph.json
   lib/infrastructure/map/territory_graph_data.dart
+  assets/images/africa_satellite.jpg   (only when a Blue Marble path is given)
 
-Usage: python3 tool/generate_africa_map.py
+Usage:
+  python3 tool/generate_africa_map.py [world.topo.bathy.200412.3x21600x10800.jpg]
+(download: https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/
+ world.topo.bathy.200412.3x21600x10800.jpg). Without the argument the
+existing assets/images/africa_satellite.jpg is reused for terrain.
 """
 
 import json
 import math
 import os
+import sys
 from collections import deque
+
+from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 CELL_DEG = 1.5  # grid resolution in degrees
 TILE = 24.0  # world units per tile
 SAMPLES = 4  # land samples per cell side
+SAT_MARGIN = 3  # tiles of satellite picture around the grid on every side
+SAT_PX_PER_DEG = 32  # satellite resolution kept in the game
+SATELLITE = os.path.join(ROOT, "assets/images/africa_satellite.jpg")
 
 # (lon, lat, type, capacity). The first seven are the start bases, in the
 # order players are added: you, then bot 1 … bot 6.
@@ -182,6 +199,55 @@ def main():
     ordered = sorted(cells, key=lambda k: (k[1], k[0]))
     index = {cell: i for i, cell in enumerate(ordered)}
 
+    # Satellite picture covering the grid plus SAT_MARGIN tiles around it.
+    sat_lon0 = origin_lon - SAT_MARGIN * CELL_DEG
+    sat_lat0 = origin_lat + SAT_MARGIN * CELL_DEG
+    sat_w_deg = (cols + 2 * SAT_MARGIN) * CELL_DEG
+    sat_h_deg = (rows + 2 * SAT_MARGIN) * CELL_DEG
+    if len(sys.argv) > 1:
+        Image.MAX_IMAGE_PIXELS = None
+        world = Image.open(sys.argv[1])
+        ppd = world.width / 360
+        box = (
+            round((sat_lon0 + 180) * ppd),
+            round((90 - sat_lat0) * ppd),
+            round((sat_lon0 + sat_w_deg + 180) * ppd),
+            round((90 - sat_lat0 + sat_h_deg) * ppd),
+        )
+        crop = world.crop(box).resize(
+            (round(sat_w_deg * SAT_PX_PER_DEG), round(sat_h_deg * SAT_PX_PER_DEG)),
+            Image.LANCZOS,
+        )
+        crop.convert("RGB").save(SATELLITE, quality=84, optimize=True,
+                                 progressive=True)
+    sat = Image.open(SATELLITE).convert("RGB")
+    px_per_cell = sat.width / (cols + 2 * SAT_MARGIN)
+
+    def terrain_of(cell):
+        """Rain forest / woodland / savanna / steppe / desert, from the mean
+        colour of the tile's land pixels (sea pixels are bluish)."""
+        c, r = cell
+        x0 = round((c + SAT_MARGIN) * px_per_cell)
+        y0 = round((r + SAT_MARGIN) * px_per_cell)
+        x1 = round((c + SAT_MARGIN + 1) * px_per_cell)
+        y1 = round((r + SAT_MARGIN + 1) * px_per_cell)
+        pixels = [
+            p for p in sat.crop((x0, y0, x1, y1)).getdata()
+            if not (p[2] > p[0] + 8 and p[2] >= p[1])
+        ] or list(sat.crop((x0, y0, x1, y1)).getdata())
+        rr = sum(p[0] for p in pixels) / len(pixels)
+        gg = sum(p[1] for p in pixels) / len(pixels)
+        light = (rr + gg + sum(p[2] for p in pixels) / len(pixels)) / 3
+        if light < 45 and gg > rr:
+            return "rainforest"
+        if light < 75 and gg >= rr * 0.97:
+            return "woodland"
+        if light < 100:
+            return "savanna"
+        if light < 125:
+            return "steppe"
+        return "desert"
+
     adjacency = {i: set() for i in range(len(ordered))}
     for cell in ordered:
         for n in neighbours(cell, cells):
@@ -228,6 +294,7 @@ def main():
             "col": cell[0],
             "row": cell[1],
         }
+        t["terrain"] = terrain_of(cell)
         if cell in mines:
             t["diamondMine"] = True
         territories.append(t)
@@ -242,6 +309,7 @@ def main():
     lines.append(f'  "cols": {cols},')
     lines.append(f'  "rows": {rows},')
     lines.append(f'  "tileSize": {TILE},')
+    lines.append(f'  "satelliteMargin": {SAT_MARGIN},')
     lines.append(f'  "startIds": {json.dumps(start_ids)},')
     lines.append('  "territories": [')
     for i, t in enumerate(territories):
@@ -288,6 +356,17 @@ def main():
             ("S" if (c, r) in starts else "B" if (c, r) in base_of
              else "D" if (c, r) in mines else "#") if (c, r) in cells else "."
             for c in range(cols)
+        ))
+    terrains = {}
+    for t in territories:
+        terrains[t["terrain"]] = terrains.get(t["terrain"], 0) + 1
+    print("terrain:", terrains, "satellite:", sat.size)
+    for r in range(rows):
+        print("".join(
+            {"rainforest": "F", "woodland": "w", "desert": ".", "steppe": ":",
+             "savanna": "s"}[
+                territories[index[(c, r)]]["terrain"]] if (c, r) in cells
+            else " " for c in range(cols)
         ))
     missing = sorted(set("region_" + k for k in countries) - set(regions))
     if missing:

@@ -46,7 +46,7 @@
   "tutorial_skip": "Atla",
   "tutorial_next": "İleri",
   "tutorial_finish": "Başla",
-  "tutorial_step_map": "Bu harita Afrika. Kıta yüzlerce minik kareden oluşuyor. Sen kuzeybatıdaki mavi karelerdesin; botlar Afrika’nın diğer uçlarında. İki parmakla yakınlaştırıp kaydırabilirsin.",
+  "tutorial_step_map": "Bu harita Afrika’nın gerçek uydu görüntüsü: Sahra çölü, Kongo’nun yağmur ormanları, savanlar. Kıta yüzlerce minik kareden oluşuyor; arazi oyunu etkilemez. Sen kuzeybatıdaki mavi karelerdesin, botlar Afrika’nın diğer uçlarında. İki parmakla yakınlaştırıp kaydırabilirsin.",
   "tutorial_step_territory": "Kendi kareni seç, sonra yanındaki kareye dokunarak saldır ya da asker taşı. Seçili karene tekrar dokunursan yedek askerleri oraya koyarsın.",
   "tutorial_step_resources": "Her tur sonunda 80 Elmas ve sahip olduğun her 12 kare için ekstra asker kazanırsın. Elmas madenini ele geçirirsen 250, altın madenini (sarı altın külçeleri) ele geçirirsen 150 Elmas daha alırsın.",
   "tutorial_step_abilities": "Kartlar kare ele geçirir: Ateş Bombası 2, Bombardıman 8, Mega Bomba 25 kare. Asker Büyüsü asker getirir.",
@@ -145,5 +145,11 @@
   "region_lesotho": "Lesotho",
   "region_eswatini": "Esvatini",
   "gold_mine_captured": "Altın madeni ele geçirildi: +{count} Elmas",
-  "gold_mine_label": "Altın madeni"
+  "gold_mine_label": "Altın madeni",
+  "terrain_label": "Arazi:",
+  "terrain_rainforest": "Yağmur ormanı",
+  "terrain_woodland": "Ormanlık",
+  "terrain_savanna": "Savan",
+  "terrain_steppe": "Bozkır",
+  "terrain_desert": "Çöl"
 }

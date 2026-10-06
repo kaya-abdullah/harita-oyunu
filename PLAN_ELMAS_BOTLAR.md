@@ -113,3 +113,29 @@ Kaynak: `WhatsApp Audio 2026-10-06 at 22.26.50.mp4`.
   her üsün altın madeni olması ve madenlerle çakışmaması, girişte fotoğrafın ancak patlamadan
   sonra görünmesi.
 - Giriş animasyonu ve harita kare kare görüntülenip kontrol edildi.
+
+---
+
+# 3. tur — Gerçekçi Görseller, Uydu Haritası, Ormanlar
+
+İstek (yazılı): "Oyun biraz daha gerçekçi olsun, görseller çok daha iyi ve gerçekçi olsun;
+bazı yerlere orman ekle (gerçek kıtayla uyumlu, oyuna engel olmasın)."
+
+## Yapılanlar
+- **Uydu haritası:** Harita artık NASA Blue Marble uydu görüntüsü (topoğrafya ve deniz derinliği,
+  kamu malı). Görüntü harita gibi enlem-boylam düzeninde, bu yüzden kareler tam üstüne oturuyor.
+  Sahra, Sahel, Kongo yağmur ormanı, Nil, Büyük Göller ve okyanus derinlikleri gerçek
+  görünümünde. Ülke sınırları ince beyaz çizgi, ordu kareleri yarı saydam renk (altındaki arazi
+  görünüyor), ordu sınırlarında koyu "duvar" çizgisi var. Sayılar gölgeli beyaz.
+- **Ormanlar ve arazi:** Her karenin arazisi uydu renginden belirleniyor: Yağmur ormanı (218
+  kare: Kongo, Gabon, Gine Körfezi kıyısı), Ormanlık (124: Zambiya, Angola, Mozambik), Savan,
+  Bozkır, Çöl (367: Sahra, Namib). Kare bilgi panelinde "Arazi: Yağmur ormanı" gibi ikonlu bir
+  satır var. Arazi oyunu etkilemiyor.
+- **Menü:** Arka plan uzaydan Afrika (karartılmış), başlık beyaz.
+- Ekranların krem rengi arka planı daha ciddi, soğuk bir griye çevrildi.
+- Görsel kaynakları: `assets/images/CREDITS.txt`.
+
+## Test
+- `flutter test`: 124 test geçiyor. Yeni testler: arazinin gerçek kıtayla uyumu (Kongo ve Gabon
+  yağmur ormanı, Libya ve Cezayir çöl, Zambiya ormanlık), uydu görüntüsünün haritayı doğru
+  oranla kaplaması. Harita testleri uydu görüntüsü yüklenince çiziliyor (golden'lar güncellendi).

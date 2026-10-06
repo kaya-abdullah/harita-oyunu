@@ -1,6 +1,7 @@
 /// Africa map Flame component for Harita: Kendi İmparatorluğunu Kur.
 library;
 
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flame/components.dart';
@@ -18,15 +19,18 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 
 // ─── MapComponent ─────────────────────────────────────────────────────────────
 
-/// Renders Africa as a normal map — real coastline and country borders —
-/// divided into many tiny square tiles ("minik kare"), and turns taps into
-/// [GameNotifier.onTerritoryTapped] calls.
+/// Renders Africa as it really looks from space — NASA's Blue Marble
+/// satellite picture (deserts, rain forests, savanna, ocean depths) with the
+/// real country borders — divided into many tiny square tiles ("minik
+/// kare"), and turns taps into [GameNotifier.onTerritoryTapped] calls.
 ///
 /// Drawing everything in one component (instead of one component per tile)
 /// keeps the frame cheap on phones. Layers, bottom to top:
-///   - a light shore band and the countries in earthy colours;
-///   - owned tiles in their army colour, clipped to the coastline;
-///   - country borders and the coast, then a faint tile grid;
+///   - the satellite picture (until it has loaded — and in tests that do not
+///     wait for it — a drawn map with earthy country colours instead);
+///   - thin country borders;
+///   - owned tiles tinted in their army colour (the land still shows
+///     through), clipped to the coastline, and a faint tile grid;
 ///   - "walls": a dark line in each army's colour along its frontier;
 ///   - gold bars on the bases (gold mines), cyan diamond-mine markers;
 ///   - unit counts (only once zoomed in far enough to read them);
@@ -56,6 +60,36 @@ class MapComponent extends PositionComponent
   final Map<String, Path> _countries = {};
   final List<(Offset, Offset)> _seaLinks = [];
 
+  /// The satellite picture (`assets/images/africa_satellite.jpg`), once
+  /// loaded.
+  Image? _satellite;
+  final Completer<void> _satelliteLoaded = Completer<void>();
+
+  /// Completes when the satellite picture is ready to draw.
+  Future<void> get satelliteReady => _satelliteLoaded.future;
+
+  /// Whether the satellite picture is being drawn.
+  bool get hasSatellite => _satellite != null;
+
+  /// File of the satellite picture under `assets/images/`.
+  static const String satelliteFile = 'africa_satellite.jpg';
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    // Not awaited: the map is playable at once and the picture fades in
+    // as soon as it is decoded.
+    game.images
+        .load(satelliteFile)
+        .then((image) {
+          _satellite = image;
+          if (!_satelliteLoaded.isCompleted) _satelliteLoaded.complete();
+        })
+        .catchError((Object _) {
+          // Keep the drawn map if the picture cannot be loaded.
+        });
+  }
+
   static int _cellKey(int col, int row) => row * 1000 + col;
 
   /// Unit counts are drawn only when a tile is at least this many screen
@@ -67,6 +101,22 @@ class MapComponent extends PositionComponent
   static final List<Paint> _armyPaints = [
     for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(230),
   ];
+  // Over the satellite picture the army colour is a tint, so forests and
+  // deserts stay visible under conquered land.
+  static final List<Paint> _armyTints = [
+    for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(180),
+  ];
+  static final Paint _satellitePaint = Paint()
+    ..filterQuality = FilterQuality.medium;
+  static final Paint _satGridPaint = Paint()
+    ..color = const Color(0x14FFFFFF)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.6;
+  static final Paint _satBorderPaint = Paint()
+    ..color = const Color(0x8CFFFFFF)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.9
+    ..strokeJoin = StrokeJoin.round;
   static final List<Paint> _wallPaints = [
     for (final c in AppTheme.armyPrimaries)
       Paint()
@@ -125,6 +175,7 @@ class MapComponent extends PositionComponent
       color: Color(0xFFFFFFFF),
       fontSize: 11,
       fontWeight: FontWeight.w800,
+      shadows: [Shadow(color: Color(0xCC000000), blurRadius: 2)],
     ),
   );
   static final TextPaint _darkText = TextPaint(
@@ -216,24 +267,40 @@ class MapComponent extends PositionComponent
     }
 
     // ── Land ────────────────────────────────────────────────────────────
-    canvas.drawPath(_land, _shorePaint);
-    _countries.forEach((key, path) {
-      canvas.drawPath(path, _countryPaints[key]!);
-    });
+    final satellite = _satellite;
+    if (satellite != null) {
+      canvas.drawImageRect(
+        satellite,
+        Rect.fromLTWH(
+          0,
+          0,
+          satellite.width.toDouble(),
+          satellite.height.toDouble(),
+        ),
+        graph.satelliteRect,
+        _satellitePaint,
+      );
+      _countries.forEach((_, path) => canvas.drawPath(path, _satBorderPaint));
+    } else {
+      canvas.drawPath(_land, _shorePaint);
+      _countries.forEach((key, path) {
+        canvas.drawPath(path, _countryPaints[key]!);
+      });
+      // Country borders lie under the armies, whose walls mark their land.
+      _countries.forEach((_, path) => canvas.drawPath(path, _borderHalo));
+      _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
+    }
 
-    // Country borders lie under the armies, whose walls mark their land.
-    _countries.forEach((_, path) => canvas.drawPath(path, _borderHalo));
-    _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
-
+    final tints = satellite != null ? _armyTints : _armyPaints;
     canvas
       ..save()
       ..clipPath(_land);
     for (final t in territories) {
       final owner = t.ownerArmyId;
       if (owner == null) continue;
-      canvas.drawRect(_tileRect(t.id), _armyPaints[owner.index]);
+      canvas.drawRect(_tileRect(t.id), tints[owner.index]);
     }
-    canvas.drawPath(_grid, _gridPaint);
+    canvas.drawPath(_grid, satellite != null ? _satGridPaint : _gridPaint);
     _drawWalls(canvas, territories);
     canvas.restore();
     for (final (a, b) in _seaLinks) {
@@ -258,12 +325,13 @@ class MapComponent extends PositionComponent
       if (t.hasDiamondMine) _drawMine(canvas, rect);
 
       if (showNumbers && t.unitCount > 0) {
-        (t.ownerArmyId == null ? _darkText : _lightText).render(
-          canvas,
-          '${t.unitCount}',
-          Vector2(rect.center.dx, rect.center.dy + 1),
-          anchor: Anchor.center,
-        );
+        (t.ownerArmyId == null && satellite == null ? _darkText : _lightText)
+            .render(
+              canvas,
+              '${t.unitCount}',
+              Vector2(rect.center.dx, rect.center.dy + 1),
+              anchor: Anchor.center,
+            );
       }
 
       if (targeting &&

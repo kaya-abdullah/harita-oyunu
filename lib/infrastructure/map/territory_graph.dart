@@ -27,6 +27,27 @@ class TerritoryGraphException implements Exception {
   String toString() => 'TerritoryGraphException: $message';
 }
 
+// ─── Terrain ─────────────────────────────────────────────────────────────────
+
+/// What the land of a tile looks like on the satellite picture. Purely
+/// informative: terrain never changes the game.
+enum Terrain {
+  /// Tropical rain forest (Congo basin, Gulf of Guinea coast).
+  rainforest,
+
+  /// Open forest / woodland (miombo of Zambia, Angola, Mozambique).
+  woodland,
+
+  /// Grassland with scattered trees.
+  savanna,
+
+  /// Dry grass and scrub (Sahel, Kalahari edges).
+  steppe,
+
+  /// Sand and rock (Sahara, Namib).
+  desert,
+}
+
 // ─── TerritoryPosition ───────────────────────────────────────────────────────
 
 /// Holds the (x, y) screen-space coordinates for a territory as defined in
@@ -77,6 +98,8 @@ class TerritoryGraph {
     required this.tileSize,
     required this.startIds,
     required this.outlines,
+    required this.terrains,
+    required this.satelliteMargin,
   }) : _positions = positions;
 
   /// All tiles of the Africa map in id-ascending order.
@@ -99,6 +122,25 @@ class TerritoryGraph {
   /// region name key. Drawn under the tiles so Africa looks like a normal
   /// map. Each outline is a closed ring of points.
   final Map<String, List<List<Offset>>> outlines;
+
+  /// Terrain of every tile, indexed by tile id.
+  final List<Terrain> terrains;
+
+  /// How many tiles of satellite picture (`assets/images/africa_satellite.jpg`)
+  /// lie around the grid on every side. The picture covers the world rect
+  /// [satelliteRect].
+  final int satelliteMargin;
+
+  /// World-space rectangle covered by the satellite picture.
+  Rect get satelliteRect => Rect.fromLTWH(
+    -satelliteMargin * tileSize,
+    -satelliteMargin * tileSize,
+    (cols + 2 * satelliteMargin) * tileSize,
+    (rows + 2 * satelliteMargin) * tileSize,
+  );
+
+  /// Terrain of tile [id].
+  Terrain terrainOf(int id) => terrains[id];
 
   /// Tile at which the human player (Army 1) starts.
   int get playerStartId => startIds.first;
@@ -148,6 +190,7 @@ class TerritoryGraph {
     // ── Parse ──────────────────────────────────────────────────────────────
     final territories = <Territory>[];
     final positions = <int, TerritoryPosition>{};
+    final terrainById = <int, Terrain>{};
 
     for (final raw in rawList) {
       final map = raw as Map<String, dynamic>;
@@ -165,6 +208,10 @@ class TerritoryGraph {
       final y = (map['y'] as num?)?.toDouble() ?? (row + 0.5) * tileSize;
 
       final type = _parseTerritoryType(typeStr, id);
+      terrainById[id] = Terrain.values.firstWhere(
+        (t) => t.name == map['terrain'],
+        orElse: () => Terrain.savanna,
+      );
 
       territories.add(
         Territory(
@@ -233,6 +280,10 @@ class TerritoryGraph {
       tileSize: tileSize,
       startIds: List.unmodifiable(startIds),
       outlines: Map.unmodifiable(outlines),
+      terrains: List.unmodifiable([
+        for (final t in territories) terrainById[t.id]!,
+      ]),
+      satelliteMargin: decoded['satelliteMargin'] as int? ?? 0,
     );
   }
 

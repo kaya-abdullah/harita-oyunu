@@ -148,6 +148,15 @@ Future<WarGame> _pumpGame(
     final game = tester
         .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
         .game!;
+    // Let the satellite picture decode (real async work), then redraw.
+    for (var i = 0; i < 50 && !game.mapComponent.hasSatellite; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(game.mapComponent.hasSatellite, isTrue);
+    await tester.pump();
     final startId = state.territories
         .firstWhere((t) => t.ownerArmyId == ArmyId.army1)
         .id;

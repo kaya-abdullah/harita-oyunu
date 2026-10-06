@@ -122,9 +122,9 @@ abstract class AppTheme {
   // Background / surface
   // ────────────────────────────────────────
 
-  /// App-wide warm cream background — child-friendly, low eye-strain.
-  /// Dark text on this surface: ~19.6:1 ✓
-  static const Color kBackground = Color(0xFFFFFDE7);
+  /// App-wide cool light-grey background (a calm, map-room look).
+  /// Dark text on this surface: ~16:1 ✓
+  static const Color kBackground = Color(0xFFE8ECEF);
 
   /// Card / sheet surface (near-white).
   /// Dark text: ~19.6:1 ✓

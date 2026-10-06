@@ -121,8 +121,9 @@ class SeaBackdrop extends PositionComponent
         priority: -1,
       );
 
-  /// Ocean colour around Africa.
-  static const Color seaColor = Color(0xFF4FC3F7);
+  /// Deep-ocean colour around Africa (matches the satellite picture's
+  /// open sea).
+  static const Color seaColor = Color(0xFF061431);
 
   double _zoomAtStart = 1;
 

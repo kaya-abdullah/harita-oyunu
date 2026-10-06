@@ -125,6 +125,13 @@ class TerritoryInfoPanel extends ConsumerWidget {
               ? (strings.goldMineLabel, '+$kGoldMineReward')
               : null,
           mineIsGold: !territory.hasDiamondMine && territory.hasGoldMine,
+          terrainText: (
+            strings.terrainLabel,
+            strings.terrainName(
+              TerritoryGraph.bundled().terrainOf(territory.id).name,
+            ),
+          ),
+          terrain: TerritoryGraph.bundled().terrainOf(territory.id),
           onDeploy: () => ref
               .read(gameProvider.notifier)
               .deployReinforcements(territory.id),
@@ -179,6 +186,8 @@ class _InfoCard extends StatelessWidget {
     required this.reserveText,
     required this.mineText,
     required this.mineIsGold,
+    required this.terrainText,
+    required this.terrain,
   });
 
   final String territoryName;
@@ -204,6 +213,12 @@ class _InfoCard extends StatelessWidget {
 
   /// Whether [mineText] describes a gold mine (else a diamond mine).
   final bool mineIsGold;
+
+  /// (label, value) of the terrain row (forest, desert, …).
+  final (String, String) terrainText;
+
+  /// The tile's terrain (picks the row's icon).
+  final Terrain terrain;
 
   @override
   Widget build(BuildContext context) {
@@ -268,6 +283,25 @@ class _InfoCard extends StatelessWidget {
                   iconColor: AppTheme.army1Primary,
                   label: unitsLabel,
                   value: unitCount.toString(),
+                ),
+                const SizedBox(height: 10),
+                _InfoRow(
+                  icon: switch (terrain) {
+                    Terrain.rainforest ||
+                    Terrain.woodland => Icons.forest_rounded,
+                    Terrain.savanna => Icons.grass_rounded,
+                    Terrain.steppe => Icons.landscape_rounded,
+                    Terrain.desert => Icons.wb_sunny_rounded,
+                  },
+                  iconColor: switch (terrain) {
+                    Terrain.rainforest => const Color(0xFF1B5E20),
+                    Terrain.woodland => const Color(0xFF558B2F),
+                    Terrain.savanna => const Color(0xFF9E9D24),
+                    Terrain.steppe => const Color(0xFF8D6E63),
+                    Terrain.desert => const Color(0xFFE65100),
+                  },
+                  label: terrainText.$1,
+                  value: terrainText.$2,
                 ),
                 if (mineText != null) ...[
                   const SizedBox(height: 10),

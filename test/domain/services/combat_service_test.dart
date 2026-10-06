@@ -42,14 +42,12 @@ Army makeArmy({ArmyId id = ArmyId.army1}) {
         type: type,
         isUnlocked: false,
         cooldownTurnsRemaining: null,
-        chargeLevel: type == AbilityType.directLaser ? 0 : null,
-        maxCharge: type == AbilityType.directLaser ? 3 : null,
       ),
   };
   return Army(
     id: id,
     kind: ArmyKind.human,
-    elmaBalance: 100,
+    diamondBalance: 100,
     totalUnitPool: 10,
     abilities: Map.unmodifiable(abilities),
     inventory: const [],
@@ -61,8 +59,10 @@ Army makeArmy({ArmyId id = ArmyId.army1}) {
 GameState makeState(List<Territory> territories) {
   return GameState(
     territories: territories,
-    army1: makeArmy(id: ArmyId.army1),
-    army2: makeArmy(id: ArmyId.army2),
+    armies: [
+      makeArmy(id: ArmyId.army1),
+      makeArmy(id: ArmyId.army2),
+    ],
     currentTurn: 1,
     activeArmyId: ArmyId.army1,
     phase: GamePhase.playing,
@@ -1120,9 +1120,9 @@ void main() {
         targetTerritoryId: 1,
       );
 
-      expect(result.army1.elmaBalance, state.army1.elmaBalance);
+      expect(result.army1.diamondBalance, state.army1.diamondBalance);
       expect(result.army1.totalUnitPool, state.army1.totalUnitPool);
-      expect(result.army2.elmaBalance, state.army2.elmaBalance);
+      expect(result.army2.diamondBalance, state.army2.diamondBalance);
       expect(result.army2.totalUnitPool, state.army2.totalUnitPool);
     });
   });

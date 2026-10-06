@@ -1,7 +1,7 @@
 /// Tutorial screen for Harita: Kendi İmparatorluğunu Kur.
 ///
 /// Guides new players through 7 onboarding steps. Each step displays:
-///  - A large emoji icon representing the topic
+///  - A large icon representing the topic
 ///  - A localized step description (≥ 16 sp)
 ///  - A step counter (e.g. "3 / 7")
 ///  - "Next" / "Skip" buttons, replaced by a "Let's Go!" finish button on the last step
@@ -129,10 +129,7 @@ class _TutorialBody extends StatelessWidget {
 
               // ── Card ──────────────────────────────────────────────────
               Expanded(
-                child: _StepCard(
-                  emoji: step.emoji,
-                  description: stepDescription,
-                ),
+                child: _StepCard(icon: step.icon, description: stepDescription),
               ),
               const SizedBox(height: 12),
 
@@ -201,9 +198,9 @@ class _ProgressBar extends StatelessWidget {
 
 /// Animated card that slides in when the step changes.
 class _StepCard extends StatefulWidget {
-  const _StepCard({required this.emoji, required this.description});
+  const _StepCard({required this.icon, required this.description});
 
-  final String emoji;
+  final IconData icon;
   final String description;
 
   @override
@@ -234,7 +231,7 @@ class _StepCardState extends State<_StepCard>
   @override
   void didUpdateWidget(_StepCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.emoji != widget.emoji ||
+    if (oldWidget.icon != widget.icon ||
         oldWidget.description != widget.description) {
       _controller
         ..reset()
@@ -279,13 +276,8 @@ class _StepCardState extends State<_StepCard>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // ── Emoji icon ──────────────────────────────────────────
-                    Text(
-                      widget.emoji,
-                      style: const TextStyle(fontSize: 56),
-                      textAlign: TextAlign.center,
-                      semanticsLabel: '', // decorative; skip in a11y tree
-                    ),
+                    // ── Icon ────────────────────────────────────────────────
+                    Icon(widget.icon, size: 64, color: AppTheme.army1Primary),
                     const SizedBox(height: 16),
 
                     // ── Description text (≥ 16 sp per Req 11.1) ────────────
@@ -334,7 +326,7 @@ class _ActionButtons extends StatelessWidget {
       // Last step: only the "Let's Go!" finish button, full width.
       return ElevatedButton.icon(
         onPressed: onNext, // nextStep() calls skipTutorial() on last step
-        icon: const Text('🏆', style: TextStyle(fontSize: 22)),
+        icon: const Icon(Icons.flag_rounded, size: 24),
         label: Text(finishLabel),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppTheme.kAccentGreen,

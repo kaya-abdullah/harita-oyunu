@@ -9,6 +9,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:harita/core/constants.dart';
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/domain/models/army.dart';
@@ -118,6 +119,9 @@ class TerritoryInfoPanel extends ConsumerWidget {
           reserveText: territory.ownerArmyId == ArmyId.army1
               ? (strings.reserveLabel, '${gameState.army1.totalUnitPool}')
               : null,
+          mineText: territory.hasDiamondMine
+              ? (strings.diamondMineLabel, '+$kDiamondMineReward')
+              : null,
           onDeploy: () => ref
               .read(gameProvider.notifier)
               .deployReinforcements(territory.id),
@@ -132,11 +136,11 @@ class TerritoryInfoPanel extends ConsumerWidget {
     final graph = TerritoryGraph.bundled();
     final a = graph.positionOf(from);
     final b = graph.positionOf(to);
-    if (graph.isSeaLink(from, to)) return '🌊';
-    if (b.row < a.row) return '⬆️';
-    if (b.row > a.row) return '⬇️';
-    if (b.col < a.col) return '⬅️';
-    return '➡️';
+    if (graph.isSeaLink(from, to)) return '≈';
+    if (b.row < a.row) return '↑';
+    if (b.row > a.row) return '↓';
+    if (b.col < a.col) return '←';
+    return '→';
   }
 
   /// Declares an attack from [sourceId] into [targetId]. The notifier emits
@@ -147,14 +151,8 @@ class TerritoryInfoPanel extends ConsumerWidget {
 
   /// Converts an optional [ArmyId] to the localised owner label.
   String _ownerLabel(ArmyId? ownerArmyId, AppStrings strings) {
-    switch (ownerArmyId) {
-      case ArmyId.army1:
-        return strings.army1Name;
-      case ArmyId.army2:
-        return strings.army2Name;
-      case null:
-        return strings.territoryOwnerNeutral;
-    }
+    if (ownerArmyId == null) return strings.territoryOwnerNeutral;
+    return strings.armyName(ownerArmyId.index);
   }
 }
 
@@ -176,6 +174,7 @@ class _InfoCard extends StatelessWidget {
     required this.deployLabel,
     required this.onDeploy,
     required this.reserveText,
+    required this.mineText,
   });
 
   final String territoryName;
@@ -195,6 +194,9 @@ class _InfoCard extends StatelessWidget {
 
   /// (label, value) of the reserve-soldier row, or `null` to hide it.
   final (String, String)? reserveText;
+
+  /// (label, value) of the diamond-mine row, or `null` to hide it.
+  final (String, String)? mineText;
 
   @override
   Widget build(BuildContext context) {
@@ -260,6 +262,15 @@ class _InfoCard extends StatelessWidget {
                   label: unitsLabel,
                   value: unitCount.toString(),
                 ),
+                if (mineText != null) ...[
+                  const SizedBox(height: 10),
+                  _InfoRow(
+                    icon: Icons.diamond_rounded,
+                    iconColor: AppTheme.kDiamond,
+                    label: mineText!.$1,
+                    value: mineText!.$2,
+                  ),
+                ],
                 if (reserveText != null) ...[
                   const SizedBox(height: 10),
                   _InfoRow(
@@ -307,27 +318,12 @@ class _InfoCard extends StatelessWidget {
     );
   }
 
-  Color _headerColor(ArmyId? owner) {
-    switch (owner) {
-      case ArmyId.army1:
-        return AppTheme.army1Primary;
-      case ArmyId.army2:
-        return AppTheme.army2Primary;
-      case null:
-        return AppTheme.kNeutralLight;
-    }
-  }
+  Color _headerColor(ArmyId? owner) =>
+      owner == null ? AppTheme.kNeutralLight : AppTheme.armyColor(owner);
 
-  Color _ownerIconColor(ArmyId? owner) {
-    switch (owner) {
-      case ArmyId.army1:
-        return AppTheme.army1Primary;
-      case ArmyId.army2:
-        return AppTheme.army2Primary;
-      case null:
-        return const Color(0xFF757575); // neutral grey
-    }
-  }
+  Color _ownerIconColor(ArmyId? owner) => owner == null
+      ? const Color(0xFF757575) // neutral grey
+      : AppTheme.armyColor(owner);
 }
 
 // ─── _InfoRow ─────────────────────────────────────────────────────────────────
@@ -542,12 +538,13 @@ class _AttackChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = entry.owner == ArmyId.army2
-        ? AppTheme.army2Primary
-        : AppTheme.kTextDark;
+    final owner = entry.owner;
+    final color = owner == null
+        ? AppTheme.kTextDark
+        : AppTheme.armyColor(owner);
     return ElevatedButton.icon(
       onPressed: onPressed,
-      icon: const Text('⚔️', style: TextStyle(fontSize: 18)),
+      icon: const Icon(Icons.gps_fixed_rounded, size: 20),
       label: Text(
         '$attackLabel: ${entry.name} (${entry.units})',
         maxLines: 2,

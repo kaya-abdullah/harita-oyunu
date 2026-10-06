@@ -18,8 +18,7 @@ class SaveDataAdapter extends TypeAdapter<SaveData> {
     };
     return SaveData(
       territoriesJson: fields[0] as String,
-      army1Json: fields[1] as String,
-      army2Json: fields[2] as String,
+      armiesJson: fields[1] as String,
       currentTurn: fields[3] as int,
       activeArmyId: fields[4] as String,
       phase: fields[5] as String,
@@ -32,13 +31,11 @@ class SaveDataAdapter extends TypeAdapter<SaveData> {
   @override
   void write(BinaryWriter writer, SaveData obj) {
     writer
-      ..writeByte(9)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.territoriesJson)
       ..writeByte(1)
-      ..write(obj.army1Json)
-      ..writeByte(2)
-      ..write(obj.army2Json)
+      ..write(obj.armiesJson)
       ..writeByte(3)
       ..write(obj.currentTurn)
       ..writeByte(4)

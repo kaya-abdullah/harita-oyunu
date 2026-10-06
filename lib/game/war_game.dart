@@ -34,7 +34,7 @@ class WarGame extends FlameGame {
   double userZoom = 1;
 
   /// Maximum extra zoom.
-  static const double maxUserZoom = 4;
+  static const double maxUserZoom = 8;
 
   static const double _margin = 8;
 

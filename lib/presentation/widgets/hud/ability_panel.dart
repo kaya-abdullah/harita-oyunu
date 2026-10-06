@@ -1,18 +1,18 @@
 /// AbilityPanel HUD widget for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// Shows all 5 special abilities for the currently active army with their
-/// current unlock / cooldown / charge status, and reveals a locale-appropriate
-/// Snackbar tooltip when the user taps any ability button.
+/// Shows the ability cards of the human army with their current unlock /
+/// cooldown status. Each card has its own colour (the Fire Bomb card is
+/// green); tapping a card arms it.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/audio_service.dart';
-import 'package:harita/core/constants.dart';
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/domain/models/special_ability.dart';
+import 'package:harita/domain/services/ability_service.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 
@@ -27,14 +27,20 @@ String abilityDisplayName(AbilityType type, AppStrings strings) {
       return strings.abilitySoldierSpell;
     case AbilityType.megaBomba:
       return strings.abilityMegaBomba;
-    case AbilityType.directLaser:
-      return strings.abilityDirectLaser;
   }
 }
 
+/// Icon shown on the card of [type].
+IconData abilityIcon(AbilityType type) => switch (type) {
+  AbilityType.fireBomb => Icons.local_fire_department_rounded,
+  AbilityType.bombardment => Icons.flare_rounded,
+  AbilityType.soldierSpell => Icons.groups_rounded,
+  AbilityType.megaBomba => Icons.brightness_7_rounded,
+};
+
 // ─── AbilityPanel ─────────────────────────────────────────────────────────────
 
-/// Row of the five special abilities of the human army (Army 1).
+/// Row of the ability cards of the human army (Army 1).
 ///
 /// Tapping a ready ability arms it (see [abilityTargetingProvider]); the next
 /// territory tapped on the map becomes its target. Tapping a locked / cooling
@@ -104,8 +110,6 @@ class AbilityPanel extends ConsumerWidget {
         return strings.tooltipSoldierSpell;
       case AbilityType.megaBomba:
         return strings.tooltipMegaBomba;
-      case AbilityType.directLaser:
-        return strings.tooltipDirectLaser;
     }
   }
 }
@@ -132,88 +136,48 @@ class _AbilityButton extends StatelessWidget {
   final bool isArmed;
   final VoidCallback onTap;
 
-  static String emojiFor(AbilityType type) => _AbilityButton._emojis[type]!;
-
-  static const Map<AbilityType, String> _emojis = {
-    AbilityType.fireBomb: '🔥',
-    AbilityType.bombardment: '💣',
-    AbilityType.soldierSpell: '⚔️',
-    AbilityType.megaBomba: '💥',
-    AbilityType.directLaser: '🔫',
-  };
-
-  // ── Emoji icon per ability ──────────────────────────────────────────────
-
-  String get _emoji => emojiFor(abilityType);
-
-  // ── Turn threshold for locked abilities ─────────────────────────────────
-
-  int? get _unlockTurn {
-    switch (abilityType) {
-      case AbilityType.fireBomb:
-        return 0;
-      case AbilityType.bombardment:
-        return kTurnUnlockBombardment;
-      case AbilityType.soldierSpell:
-        return kTurnUnlockSoldierSpell;
-      case AbilityType.megaBomba:
-        return kTurnUnlockMegaBomba;
-      case AbilityType.directLaser:
-        return null; // charge-based, no fixed turn threshold
-    }
-  }
-
   // ── Computed state ───────────────────────────────────────────────────────
 
+  int get _unlockTurn => kAbilityUnlockTurns[abilityType] ?? 0;
   bool get _isUnlocked => abilityState?.isUnlocked ?? false;
   bool get _isOnCooldown => abilityState?.isOnCooldown ?? false;
   int get _cooldownLeft => abilityState?.cooldownTurnsRemaining ?? 0;
-  bool get _isChargebased => abilityType == AbilityType.directLaser;
-  int get _chargeLevel => abilityState?.chargeLevel ?? 0;
-  int get _maxCharge => abilityState?.maxCharge ?? 3;
-  bool get _isFullyCharged => abilityState?.isFullyCharged ?? false;
+  bool get _isReady => _isUnlocked && !_isOnCooldown;
 
   // ── Visual logic ─────────────────────────────────────────────────────────
 
+  Color get _cardColor => AppTheme.abilityColor(abilityType);
+
   Color get _backgroundColor {
     if (!_isUnlocked) return AppTheme.kNeutralLight;
-    if (_isOnCooldown) return AppTheme.kWarning.withAlpha(200);
-    if (_isChargebased && !_isFullyCharged) {
-      return AppTheme.kAccentPurple.withAlpha(60);
-    }
-    return AppTheme.kAccentGreen;
+    if (_isOnCooldown) return Color.lerp(_cardColor, Colors.white, 0.65)!;
+    return _cardColor;
   }
 
   Color get _foregroundColor {
     if (!_isUnlocked) return AppTheme.kTextDark.withAlpha(120);
-    if (_isOnCooldown) return AppTheme.kTextOnAmber;
-    if (_isChargebased && !_isFullyCharged) return AppTheme.kAccentPurple;
+    if (_isOnCooldown) return AppTheme.kTextDark;
     return AppTheme.kTextLight;
   }
 
-  // ── Status badge text ────────────────────────────────────────────────────
+  // ── Status badge ─────────────────────────────────────────────────────────
 
-  String? _badgeText(BuildContext context) {
-    if (!_isUnlocked) {
-      final unlock = _unlockTurn;
-      if (unlock != null && unlock > 0) return '🔒 $unlock';
-      if (abilityType == AbilityType.directLaser) return '🔒';
-      return '🔒 0';
-    }
-    if (_isOnCooldown) return '⏱ $_cooldownLeft';
-    if (_isChargebased) return '⚡$_chargeLevel/$_maxCharge';
+  (IconData, String)? get _badge {
+    if (!_isUnlocked) return (Icons.lock_rounded, '$_unlockTurn');
+    if (_isOnCooldown) return (Icons.timer_rounded, '$_cooldownLeft');
     return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final badge = _badgeText(context);
+    final badge = _badge;
 
     return Tooltip(
       // Flutter Tooltip as a second fallback; primary feedback is SnackBar.
       message: tooltip,
       preferBelow: false,
       child: InkWell(
+        key: Key('ability_${abilityType.name}'),
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: AnimatedContainer(
@@ -224,8 +188,8 @@ class _AbilityButton extends StatelessWidget {
             border: Border.all(
               color: isArmed
                   ? AppTheme.kWarning
-                  : _isUnlocked && !_isOnCooldown
-                  ? _foregroundColor.withAlpha(120)
+                  : _isReady
+                  ? _cardColor.withAlpha(160)
                   : Colors.transparent,
               width: isArmed ? 4 : 1.5,
             ),
@@ -234,13 +198,7 @@ class _AbilityButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Emoji icon
-              Text(
-                _emoji,
-                style: const TextStyle(fontSize: 22),
-                textAlign: TextAlign.center,
-              ),
-
+              Icon(abilityIcon(abilityType), size: 24, color: _foregroundColor),
               const SizedBox(height: 2),
 
               // Short ability name — min 16 sp
@@ -256,21 +214,23 @@ class _AbilityButton extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
 
-              // Status badge (lock / cooldown / charge)
+              // Status badge (lock / cooldown)
               if (badge != null) ...[
                 const SizedBox(height: 2),
-                Text(
-                  badge,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: _isOnCooldown
-                        ? AppTheme.kTextOnAmber
-                        : _foregroundColor,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(badge.$1, size: 15, color: _foregroundColor),
+                    const SizedBox(width: 2),
+                    Text(
+                      badge.$2,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: _foregroundColor,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ],

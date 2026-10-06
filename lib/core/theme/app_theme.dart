@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:harita/domain/models/army.dart';
+import 'package:harita/domain/models/special_ability.dart';
+
 /// AppTheme for Harita: Kendi İmparatorluğunu Kur
 ///
 /// Design constraints enforced here:
@@ -55,6 +58,46 @@ abstract class AppTheme {
   /// Lighter Army 2 background tint (card / info surfaces).
   /// Dark text on this colour: ~8.8:1 contrast ✓
   static const Color army2Light = Color(0xFFFFCDD2);
+
+  /// Solid colour of every army, indexed by [ArmyId.index]: blue (you),
+  /// red, purple, orange, teal, pink, brown. White text reads on all of them.
+  static const List<Color> armyPrimaries = [
+    army1Primary,
+    army2Primary,
+    Color(0xFF6A1B9A),
+    Color(0xFFE65100),
+    Color(0xFF00796B),
+    Color(0xFFAD1457),
+    Color(0xFF5D4037),
+  ];
+
+  /// Light tint of every army, indexed by [ArmyId.index].
+  static const List<Color> armyLights = [
+    army1Light,
+    army2Light,
+    Color(0xFFE1BEE7),
+    Color(0xFFFFE0B2),
+    Color(0xFFB2DFDB),
+    Color(0xFFF8BBD0),
+    Color(0xFFD7CCC8),
+  ];
+
+  /// Solid colour of army [id].
+  static Color armyColor(ArmyId id) => armyPrimaries[id.index];
+
+  /// Light tint of army [id].
+  static Color armyLight(ArmyId id) => armyLights[id.index];
+
+  /// Colour of each ability card. The Fire Bomb card is green.
+  static Color abilityColor(AbilityType type) => switch (type) {
+    AbilityType.fireBomb => kAccentGreen,
+    AbilityType.bombardment => const Color(0xFFE65100),
+    AbilityType.soldierSpell => army1Primary,
+    AbilityType.megaBomba => army2Primary,
+  };
+
+  /// Diamond (Elmas) colour used for the currency icon.
+  static const Color kDiamond = Color(0xFF00ACC1);
 
   // ────────────────────────────────────────
   // Accent / semantic colours

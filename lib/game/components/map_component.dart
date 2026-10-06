@@ -1,4 +1,4 @@
-/// Africa tile-map Flame component for Harita: Kendi İmparatorluğunu Kur.
+/// Africa map Flame component for Harita: Kendi İmparatorluğunu Kur.
 library;
 
 import 'dart:ui';
@@ -8,27 +8,31 @@ import 'package:flame/events.dart';
 import 'package:flutter/painting.dart' show TextStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/domain/models/territory.dart';
+import 'package:harita/game/war_game.dart';
 import 'package:harita/infrastructure/map/territory_graph.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 
 // ─── MapComponent ─────────────────────────────────────────────────────────────
 
-/// Renders the whole Africa map as a grid of small square tiles ("minik
-/// kare") and turns taps into [GameNotifier.onTerritoryTapped] calls.
+/// Renders Africa as a normal map — real coastline and country borders —
+/// divided into many tiny square tiles ("minik kare"), and turns taps into
+/// [GameNotifier.onTerritoryTapped] calls.
 ///
-/// Drawing all tiles in one component (instead of one component per tile)
-/// keeps the frame cheap on phones. Visuals:
-///   - neutral land: an earthy colour per country, owned land: army colour;
-///   - thin dark lines along country borders, a thicker coastline;
-///   - gold markers on bases (bigger for big bases);
-///   - unit counts on occupied tiles;
-///   - yellow ring on the selection, white rings on its neighbours, orange
-///     rings on valid targets while an attack ability is armed;
+/// Drawing everything in one component (instead of one component per tile)
+/// keeps the frame cheap on phones. Layers, bottom to top:
+///   - a light shore band and the countries in earthy colours;
+///   - owned tiles in their army colour, clipped to the coastline;
+///   - a faint tile grid, then country borders and the coast;
+///   - gold base markers, cyan diamond-mine markers;
+///   - unit counts (only once zoomed in far enough to read them);
+///   - selection / neighbour / ability-target frames;
 ///   - a dashed sea link to Madagascar.
-class MapComponent extends PositionComponent with TapCallbacks {
+class MapComponent extends PositionComponent
+    with TapCallbacks, HasGameReference<WarGame> {
   MapComponent({required this.ref, TerritoryGraph? graph})
     : graph = graph ?? TerritoryGraph.bundled() {
     size = Vector2(this.graph.width, this.graph.height);
@@ -42,35 +46,40 @@ class MapComponent extends PositionComponent with TapCallbacks {
   /// Riverpod widget reference used to read game state and send taps.
   final WidgetRef ref;
 
-  /// Static map layout (tile grid, regions, adjacency).
+  /// Static map layout (tile grid, regions, adjacency, outlines).
   final TerritoryGraph graph;
 
   final Map<int, int> _cellToId = {};
+  final Path _land = Path();
   final Path _grid = Path();
-  final Path _borders = Path();
-  final Path _coast = Path();
+  final Map<String, Path> _countries = {};
   final List<(Offset, Offset)> _seaLinks = [];
-  final Map<String, Paint> _regionPaints = {};
 
   static int _cellKey(int col, int row) => row * 1000 + col;
 
+  /// Unit counts are drawn only when a tile is at least this many screen
+  /// pixels wide.
+  static const double minReadableTilePx = 15;
+
   // ─── Paints ────────────────────────────────────────────────────────────────
 
-  static final Paint _army1Paint = Paint()..color = const Color(0xFF1E88E5);
-  static final Paint _army2Paint = Paint()..color = const Color(0xFFE53935);
+  static final List<Paint> _armyPaints = [
+    for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(230),
+  ];
+  static final Paint _shorePaint = Paint()
+    ..color = const Color(0xFFB3E5FC)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 7
+    ..strokeJoin = StrokeJoin.round;
   static final Paint _gridPaint = Paint()
-    ..color = const Color(0x33000000)
+    ..color = const Color(0x1F000000)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 0.8;
+    ..strokeWidth = 0.6;
   static final Paint _borderPaint = Paint()
-    ..color = const Color(0xB33E2723)
+    ..color = const Color(0xCC4E342E)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.6;
-  static final Paint _coastPaint = Paint()
-    ..color = const Color(0xFF3E2723)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 2.2
-    ..strokeCap = StrokeCap.round;
+    ..strokeWidth = 1.3
+    ..strokeJoin = StrokeJoin.round;
   static final Paint _seaLinkPaint = Paint()
     ..color = const Color(0xCCFFFFFF)
     ..style = PaintingStyle.stroke
@@ -88,10 +97,12 @@ class MapComponent extends PositionComponent with TapCallbacks {
     ..style = PaintingStyle.stroke
     ..strokeWidth = 2.2;
   static final Paint _baseFill = Paint()..color = const Color(0xFFFFC107);
-  static final Paint _baseStroke = Paint()
-    ..color = const Color(0xFF4E3507)
+  static final Paint _markerStroke = Paint()
+    ..color = const Color(0xFF263238)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 1.2;
+  static final Paint _mineFill = Paint()..color = AppTheme.kDiamond;
+  static final Paint _mineShine = Paint()..color = const Color(0xFFE0F7FA);
 
   static final TextPaint _lightText = TextPaint(
     style: const TextStyle(
@@ -108,7 +119,7 @@ class MapComponent extends PositionComponent with TapCallbacks {
     ),
   );
 
-  /// Earthy pastel palette for neutral land, one colour per country.
+  /// Earthy palette for neutral land, one colour per country.
   static const List<Color> _landPalette = [
     Color(0xFFE6D3A3),
     Color(0xFFD9C27E),
@@ -119,42 +130,43 @@ class MapComponent extends PositionComponent with TapCallbacks {
     Color(0xFFD4B483),
     Color(0xFFC5DDA8),
   ];
+  final Map<String, Paint> _countryPaints = {};
 
   // ─── Static layers ─────────────────────────────────────────────────────────
 
   void _buildStaticLayers() {
-    final s = graph.tileSize;
-    final regions = <String>[];
-    for (final t in graph.territories) {
-      if (!regions.contains(t.name)) regions.add(t.name);
-    }
-    for (var i = 0; i < regions.length; i++) {
-      _regionPaints[regions[i]] = Paint()
+    final keys = graph.outlines.keys.toList()..sort();
+    for (var i = 0; i < keys.length; i++) {
+      final path = Path();
+      for (final ring in graph.outlines[keys[i]]!) {
+        path.addPolygon(ring, true);
+        _land.addPolygon(ring, true);
+      }
+      _countries[keys[i]] = path;
+      _countryPaints[keys[i]] = Paint()
         ..color = _landPalette[i % _landPalette.length];
     }
 
+    final s = graph.tileSize;
     for (final t in graph.territories) {
       final p = graph.positionOf(t.id);
       final x = p.col * s;
       final y = p.row * s;
-      // Right / bottom / left / top edges.
-      final edges = [
-        (p.col + 1, p.row, Offset(x + s, y), Offset(x + s, y + s)),
-        (p.col, p.row + 1, Offset(x, y + s), Offset(x + s, y + s)),
-        (p.col - 1, p.row, Offset(x, y), Offset(x, y + s)),
-        (p.col, p.row - 1, Offset(x, y), Offset(x + s, y)),
-      ];
-      for (final (c, r, a, b) in edges) {
-        final otherId = _cellToId[_cellKey(c, r)];
-        if (otherId == null) {
-          _coast
-            ..moveTo(a.dx, a.dy)
-            ..lineTo(b.dx, b.dy);
-        } else if (otherId > t.id) {
-          (graph.getById(otherId).name != t.name ? _borders : _grid)
-            ..moveTo(a.dx, a.dy)
-            ..lineTo(b.dx, b.dy);
-        }
+      // Right and bottom edges; neighbours draw the others.
+      _grid
+        ..moveTo(x + s, y)
+        ..lineTo(x + s, y + s)
+        ..moveTo(x, y + s)
+        ..lineTo(x + s, y + s);
+      if (!_cellToId.containsKey(_cellKey(p.col - 1, p.row))) {
+        _grid
+          ..moveTo(x, y)
+          ..lineTo(x, y + s);
+      }
+      if (!_cellToId.containsKey(_cellKey(p.col, p.row - 1))) {
+        _grid
+          ..moveTo(x, y)
+          ..lineTo(x + s, y);
       }
       for (final adj in t.adjacentIds) {
         if (adj > t.id && graph.isSeaLink(t.id, adj)) {
@@ -166,52 +178,72 @@ class MapComponent extends PositionComponent with TapCallbacks {
 
   // ─── Rendering ─────────────────────────────────────────────────────────────
 
+  Rect _tileRect(int id) {
+    final p = graph.positionOf(id);
+    final s = graph.tileSize;
+    return Rect.fromLTWH(p.col * s, p.row * s, s, s);
+  }
+
   @override
   void render(Canvas canvas) {
     final state = ref.read(gameProvider);
     final selectedId = ref.read(selectedTerritoryProvider);
     final armed = ref.read(armedAbilityProvider);
-    final s = graph.tileSize;
     final territories = state.territories;
 
+    // Zoom level and visible area (both unknown before the game mounts).
+    var tilePx = 0.0;
+    Rect? visible;
+    if (isMounted) {
+      tilePx = graph.tileSize * game.camera.viewfinder.zoom;
+      visible = game.camera.visibleWorldRect.inflate(graph.tileSize);
+    }
+
+    // ── Land ────────────────────────────────────────────────────────────
+    canvas.drawPath(_land, _shorePaint);
+    _countries.forEach((key, path) {
+      canvas.drawPath(path, _countryPaints[key]!);
+    });
+
+    canvas
+      ..save()
+      ..clipPath(_land);
+    for (final t in territories) {
+      final owner = t.ownerArmyId;
+      if (owner == null) continue;
+      canvas.drawRect(_tileRect(t.id), _armyPaints[owner.index]);
+    }
+    canvas
+      ..drawPath(_grid, _gridPaint)
+      ..restore();
+
+    _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
     for (final (a, b) in _seaLinks) {
       _drawDashed(canvas, a, b);
     }
 
+    // ── Markers, numbers, frames ────────────────────────────────────────
     Territory? selected;
     if (selectedId != null && selectedId < territories.length) {
       selected = territories[selectedId];
     }
+    final showNumbers = tilePx >= minReadableTilePx;
+    final targeting = armed != null && armed != AbilityType.soldierSpell;
 
     for (final t in territories) {
-      final p = graph.positionOf(t.id);
-      final rect = Rect.fromLTWH(p.col * s, p.row * s, s, s);
-      final fill = switch (t.ownerArmyId) {
-        ArmyId.army1 => _army1Paint,
-        ArmyId.army2 => _army2Paint,
-        null => _regionPaints[t.name] ?? _regionPaints.values.first,
-      };
-      canvas.drawRect(rect, fill);
-    }
-
-    canvas
-      ..drawPath(_grid, _gridPaint)
-      ..drawPath(_borders, _borderPaint)
-      ..drawPath(_coast, _coastPaint);
-
-    for (final t in territories) {
-      final p = graph.positionOf(t.id);
-      final rect = Rect.fromLTWH(p.col * s, p.row * s, s, s);
+      final rect = _tileRect(t.id);
+      if (visible != null && !visible.overlaps(rect)) continue;
 
       if (t.type != TerritoryType.normal) {
         final r = t.type == TerritoryType.bigBase ? 5.0 : 3.8;
         final c = Offset(rect.left + r + 1.5, rect.top + r + 1.5);
         canvas
           ..drawCircle(c, r, _baseFill)
-          ..drawCircle(c, r, _baseStroke);
+          ..drawCircle(c, r, _markerStroke);
       }
+      if (t.hasDiamondMine) _drawMine(canvas, rect);
 
-      if (t.unitCount > 0) {
+      if (showNumbers && t.unitCount > 0) {
         (t.ownerArmyId == null ? _darkText : _lightText).render(
           canvas,
           '${t.unitCount}',
@@ -220,8 +252,7 @@ class MapComponent extends PositionComponent with TapCallbacks {
         );
       }
 
-      if (armed != null &&
-          armed != AbilityType.soldierSpell &&
+      if (targeting &&
           t.ownerArmyId != ArmyId.army1 &&
           t.adjacentIds.any(
             (id) => territories[id].ownerArmyId == ArmyId.army1,
@@ -233,12 +264,29 @@ class MapComponent extends PositionComponent with TapCallbacks {
     }
 
     if (selected != null) {
-      final p = graph.positionOf(selected.id);
-      canvas.drawRect(
-        Rect.fromLTWH(p.col * s, p.row * s, s, s).deflate(1),
-        _selectedPaint,
-      );
+      canvas.drawRect(_tileRect(selected.id).deflate(1), _selectedPaint);
     }
+  }
+
+  /// A small cut-diamond marker in the top-right corner of [rect].
+  void _drawMine(Canvas canvas, Rect rect) {
+    final w = rect.width * 0.36;
+    final cx = rect.right - w / 2 - 1.5;
+    final top = rect.top + 2.0;
+    final gem = Path()
+      ..moveTo(cx - w / 2, top + w * 0.3)
+      ..lineTo(cx - w * 0.25, top)
+      ..lineTo(cx + w * 0.25, top)
+      ..lineTo(cx + w / 2, top + w * 0.3)
+      ..lineTo(cx, top + w)
+      ..close();
+    canvas
+      ..drawPath(gem, _mineFill)
+      ..drawRect(
+        Rect.fromLTWH(cx - w * 0.2, top + w * 0.08, w * 0.15, w * 0.15),
+        _mineShine,
+      )
+      ..drawPath(gem, _markerStroke);
   }
 
   void _drawDashed(Canvas canvas, Offset a, Offset b) {

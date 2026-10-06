@@ -1,4 +1,4 @@
-// Widget tests for the difficulty picker and the Africa game screen.
+// Widget tests for the new-game picker and the Africa game screen.
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -32,17 +32,17 @@ Future<AppStrings> _strings(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('difficulty picker offers Çok Kolay / Orta / Zor', (
+  testWidgets('new-game picker: 1–6 bots and Çok Kolay / Orta / Zor', (
     tester,
   ) async {
     final strings = await _strings(tester);
-    AiDifficulty? picked;
+    NewGameChoice? picked;
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
           builder: (context) => ElevatedButton(
             onPressed: () async =>
-                picked = await showDifficultyPicker(context, strings),
+                picked = await showNewGamePicker(context, strings),
             child: const Text('go'),
           ),
         ),
@@ -51,13 +51,24 @@ void main() {
     await tester.tap(find.text('go'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Kaç bot oynasın?'), findsOneWidget);
+    for (var n = 1; n <= 6; n++) {
+      expect(find.byKey(Key('bots_$n')), findsOneWidget);
+    }
     expect(find.text('Çok Kolay'), findsOneWidget);
     expect(find.text('Orta'), findsOneWidget);
     expect(find.text('Zor'), findsOneWidget);
+    // One colour dot per army (you + 1 bot).
+    expect(find.byType(CircleAvatar), findsNWidgets(2));
+
+    await tester.tap(find.byKey(const Key('bots_6')));
+    await tester.pump();
+    expect(find.byType(CircleAvatar), findsNWidgets(7));
 
     await tester.tap(find.byKey(const Key('difficulty_hard')));
     await tester.pumpAndSettle();
-    expect(picked, AiDifficulty.hard);
+    expect(picked?.difficulty, AiDifficulty.hard);
+    expect(picked?.bots, 6);
   });
 
   for (final (name, size) in [
@@ -108,6 +119,7 @@ Future<WarGame> _pumpGame(
     );
     addTearDown(container.dispose);
     container.read(newGameDifficultyProvider.notifier).set(AiDifficulty.hard);
+    container.read(newGameBotCountProvider.notifier).set(3);
     await tester.runAsync(() => container.read(localeServiceProvider.future));
 
     await tester.pumpWidget(
@@ -122,7 +134,15 @@ Future<WarGame> _pumpGame(
 
     final state = container.read(gameProvider);
     expect(state.difficulty, AiDifficulty.hard);
-    expect(find.textContaining('😈'), findsOneWidget);
+    expect(state.armies, hasLength(4));
+    // One chip per army in the resource bar, plus the diamond balance.
+    for (final id in ArmyId.values.take(4)) {
+      expect(find.byKey(Key('army_chip_${id.name}')), findsOneWidget);
+    }
+    expect(find.byKey(const Key('diamond_balance')), findsOneWidget);
+    // No laser card any more; the Fire Bomb card is green.
+    expect(find.byKey(const Key('ability_fireBomb')), findsOneWidget);
+    expect(find.text('Direkt'), findsNothing);
 
     // Tap the centre of the player's start tile on the Flame canvas.
     final game = tester

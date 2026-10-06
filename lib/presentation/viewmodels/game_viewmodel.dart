@@ -5,6 +5,7 @@
 library;
 
 import 'dart:collection';
+import 'dart:math' show min;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -86,6 +87,20 @@ final newGameDifficultyProvider =
       NewGameDifficultyNotifier.new,
     );
 
+/// Holds how many bots (1 … [kMaxBots]) join the next new game.
+class NewGameBotCountNotifier extends Notifier<int> {
+  @override
+  int build() => 1;
+
+  /// Sets the bot count used by the next [GameNotifier.build].
+  void set(int count) => state = count.clamp(1, kMaxBots);
+}
+
+/// Provides the number of bots for the next new game.
+final newGameBotCountProvider = NotifierProvider<NewGameBotCountNotifier, int>(
+  NewGameBotCountNotifier.new,
+);
+
 // ─── Selected territory provider ─────────────────────────────────────────────
 
 /// Minimal [Notifier] that holds the currently-selected territory id (`null`
@@ -137,9 +152,6 @@ enum GameFeedbackKind {
   /// Ability on cooldown; [GameFeedback.value] holds the turns remaining.
   abilityCooldown,
 
-  /// Direct Laser not fully charged; [GameFeedback.value] holds the charge.
-  laserCharging,
-
   /// Ability cannot be used on the tapped territory.
   invalidAbilityTarget,
 
@@ -154,6 +166,10 @@ enum GameFeedbackKind {
 
   /// Territory was conquered.
   territoryConquered,
+
+  /// A diamond mine was captured; [GameFeedback.value] holds the diamonds
+  /// earned.
+  diamondMineCaptured,
 
   /// Attack failed; defender held.
   attackRepelled,
@@ -170,8 +186,8 @@ enum GameFeedbackKind {
   /// Action attempted while it is not the human player's turn.
   notYourTurn,
 
-  /// Not enough Elma for a purchase.
-  insufficientElma,
+  /// Not enough diamonds for a purchase.
+  insufficientDiamonds,
 }
 
 /// A single feedback event. A new instance is emitted for every event so
@@ -232,6 +248,7 @@ class GameNotifier extends Notifier<GameState> {
     _aiRunning = false;
     return createInitialGameState(
       difficulty: ref.read(newGameDifficultyProvider),
+      botCount: ref.read(newGameBotCountProvider),
     );
   }
 
@@ -243,7 +260,7 @@ class GameNotifier extends Notifier<GameState> {
       state.activeArmy.kind == ArmyKind.human &&
       !_aiRunning;
 
-  /// `true` while the AI opponent is taking its turn.
+  /// `true` while a bot is taking its turn.
   bool get isAiTurn => _aiRunning || state.activeArmy.kind == ArmyKind.ai;
 
   void _feedback(GameFeedbackKind kind, [int? value]) =>
@@ -338,6 +355,7 @@ class GameNotifier extends Notifier<GameState> {
     }
     final targetBefore = _territory(targetId);
     final wasOwn = targetBefore?.ownerArmyId == state.activeArmyId;
+    final diamondsBefore = state.activeArmy.diamondBalance;
     try {
       final next = _combat.resolveAttack(
         state: state,
@@ -351,7 +369,12 @@ class GameNotifier extends Notifier<GameState> {
       if (wasOwn) {
         _feedback(GameFeedbackKind.unitsMoved);
       } else if (targetAfter?.ownerArmyId == attacker) {
-        _feedback(GameFeedbackKind.territoryConquered);
+        final earned = state.army(attacker).diamondBalance - diamondsBefore;
+        if (earned > 0) {
+          _feedback(GameFeedbackKind.diamondMineCaptured, earned);
+        } else {
+          _feedback(GameFeedbackKind.territoryConquered);
+        }
       } else {
         _feedback(GameFeedbackKind.attackRepelled);
       }
@@ -411,22 +434,20 @@ class GameNotifier extends Notifier<GameState> {
         s.cooldownTurnsRemaining,
       );
     }
-    if (type == AbilityType.directLaser && !s.isFullyCharged) {
-      return GameFeedback(GameFeedbackKind.laserCharging, s.chargeLevel ?? 0);
-    }
     return null;
   }
 
   /// Activates [type] for the active army targeting [targetId].
   ///
-  /// Emits [GameFeedback] describing failures (locked, cooldown, charge,
-  /// invalid target).
+  /// Emits [GameFeedback] describing failures (locked, cooldown, invalid
+  /// target).
   void activateAbility(AbilityType type, int targetId) {
     if (state.phase == GamePhase.victory) return;
     if (!isHumanTurn) {
       _feedback(GameFeedbackKind.notYourTurn);
       return;
     }
+    final diamondsBefore = state.activeArmy.diamondBalance;
     try {
       final next = _ability.activateAbility(
         state: state,
@@ -437,15 +458,17 @@ class GameNotifier extends Notifier<GameState> {
       ref.read(armedAbilityProvider.notifier).set(null);
       _commit(next);
       _feedback(GameFeedbackKind.abilityUsed);
+      final earned =
+          state.army(next.activeArmyId).diamondBalance - diamondsBefore;
+      if (earned > 0) {
+        _feedback(GameFeedbackKind.diamondMineCaptured, earned);
+      }
     } on LockedAbilityException catch (e) {
       ref.read(armedAbilityProvider.notifier).set(null);
       _feedback(GameFeedbackKind.abilityLocked, e.unlockTurn);
     } on CooldownActiveException catch (e) {
       ref.read(armedAbilityProvider.notifier).set(null);
       _feedback(GameFeedbackKind.abilityCooldown, e.turnsRemaining);
-    } on InsufficientChargeException catch (e) {
-      ref.read(armedAbilityProvider.notifier).set(null);
-      _feedback(GameFeedbackKind.laserCharging, e.chargeLevel);
     } on InvalidTargetException {
       // Keep the ability armed so the player can pick a valid target.
       _feedback(GameFeedbackKind.invalidAbilityTarget);
@@ -490,13 +513,10 @@ class GameNotifier extends Notifier<GameState> {
       return false;
     }
     try {
-      final army = _economy.purchaseItem(state.activeArmy, item);
-      state = state.activeArmyId == ArmyId.army1
-          ? state.copyWith(army1: army)
-          : state.copyWith(army2: army);
+      state = state.withArmy(_economy.purchaseItem(state.activeArmy, item));
       return true;
-    } on InsufficientElmaException {
-      _feedback(GameFeedbackKind.insufficientElma);
+    } on InsufficientDiamondsException {
+      _feedback(GameFeedbackKind.insufficientDiamonds);
       return false;
     }
   }
@@ -508,7 +528,7 @@ class GameNotifier extends Notifier<GameState> {
   /// Processing order:
   /// 1. Applies income, unlocks and cooldowns via [TurnService.endTurn].
   /// 2. Saves the game (Requirement 12.1).
-  /// 3. If the new active army is AI-controlled, runs the AI turn.
+  /// 3. Runs the turns of every bot that plays before the human again.
   void endTurn() {
     if (!isHumanTurn) return;
     ref.read(armedAbilityProvider.notifier).set(null);
@@ -581,25 +601,37 @@ class GameNotifier extends Notifier<GameState> {
 
   // ─── Private: AI turn ────────────────────────────────────────────────────
 
-  /// Plays the AI's full turn asynchronously (strength follows
-  /// [GameState.difficulty]), then ends it and returns control to the human.
+  /// Plays the turns of all bots (strength follows [GameState.difficulty])
+  /// one after another, ending each, until it is the human's turn again.
   Future<void> _runAiTurn() async {
     if (_aiRunning) return;
     _aiRunning = true;
     try {
-      // Each action is published as it happens so the map animates.
-      await _ai.playTurn(
-        state,
-        onAction: (s) {
-          if (ref.mounted) _commit(s);
-        },
-        shouldContinue: () => ref.mounted && state.phase == GamePhase.playing,
-      );
-      if (!ref.mounted || state.phase == GamePhase.victory) return;
+      // With many bots the first moves are shown more briefly, so a round
+      // stays short.
+      final bots = state.armies.where((a) => a.kind == ArmyKind.ai).length;
+      final many = bots > 2;
+      final slowActions = many ? 2 : kAiSlowActionCount;
+      final fastDelayMs = many ? kAiManyBotsFastDelayMs : kAiFastActionDelayMs;
+      while (ref.mounted &&
+          state.phase == GamePhase.playing &&
+          state.activeArmy.kind == ArmyKind.ai) {
+        // Each action is published as it happens so the map animates.
+        await _ai.playTurn(
+          state,
+          slowActions: slowActions,
+          fastDelayMs: fastDelayMs,
+          onAction: (s) {
+            if (ref.mounted) _commit(s);
+          },
+          shouldContinue: () => ref.mounted && state.phase == GamePhase.playing,
+        );
+        if (!ref.mounted || state.phase == GamePhase.victory) return;
 
-      // End the AI's turn (applies income, ticks cooldowns, switches army).
-      _commit(_turn.endTurn(state));
-      if (state.phase == GamePhase.playing) {
+        // End this bot's turn (income, cooldowns, next army).
+        _commit(_turn.endTurn(state));
+      }
+      if (ref.mounted && state.phase == GamePhase.playing) {
         await saveGame();
       }
     } finally {
@@ -616,10 +648,9 @@ final gameProvider = NotifierProvider<GameNotifier, GameState>(
 // ─── Derived selectors ────────────────────────────────────────────────────────
 
 /// Provides the [Army] currently taking its turn.
-final activeArmyProvider = Provider<Army>((ref) {
-  final s = ref.watch(gameProvider);
-  return s.activeArmyId == ArmyId.army1 ? s.army1 : s.army2;
-});
+final activeArmyProvider = Provider<Army>(
+  (ref) => ref.watch(gameProvider).activeArmy,
+);
 
 /// Provides `true` when a winner has been declared.
 final isVictoryProvider = Provider<bool>(
@@ -630,49 +661,53 @@ final isVictoryProvider = Provider<bool>(
 
 /// Constructs the [GameState] for a brand-new game on the Africa tile map.
 ///
-/// Army 1 (human, blue) starts at one end of Africa (around Casablanca) and
-/// Army 2 (bot, red) at the other end (around Cape Town): each owns the
-/// [kStartTileCount] tiles closest to its start base, with
-/// [kStartUnitsPerTile] units on each. Everything else starts neutral.
+/// Army 1 (human, blue) starts in Casablanca; the [botCount] bots (1 …
+/// [kMaxBots]) start at the next start bases of the map (Cape Town, Cairo,
+/// Lagos, Mogadishu, Kinshasa, Dakar). Each army owns the [kStartTileCount]
+/// tiles closest to its start base, with [kStartUnitsPerTile] units on each.
+/// Everything else starts neutral.
 ///
-/// Each army begins with 50 Elma, 10 reserve soldiers and the default
-/// abilities (`fireBomb` and the charge-based `directLaser` unlocked).
+/// Each army begins with [kStartDiamonds] diamonds, 10 reserve soldiers and
+/// the Fire Bomb unlocked.
 GameState createInitialGameState({
   AiDifficulty difficulty = AiDifficulty.medium,
+  int botCount = 1,
 }) {
   final graph = TerritoryGraph.bundled();
-  final army1Zone = _startZone(graph, graph.playerStartId);
-  final army2Zone = _startZone(graph, graph.botStartId);
+  final maxBots = min(kMaxBots, graph.startIds.length - 1);
+  final count = 1 + botCount.clamp(1, maxBots).toInt();
+  final ids = ArmyId.values.take(count).toList();
 
-  ArmyId? ownerOf(int id) => army1Zone.contains(id)
-      ? ArmyId.army1
-      : army2Zone.contains(id)
-      ? ArmyId.army2
-      : null;
+  final owner = <int, ArmyId>{};
+  for (var i = 0; i < count; i++) {
+    for (final id in _startZone(graph, graph.startIds[i], owner.keys.toSet())) {
+      owner[id] = ids[i];
+    }
+  }
 
   final territories = [
     for (final t in graph.territories)
       t.copyWith(
-        unitCount: ownerOf(t.id) != null ? kStartUnitsPerTile : 0,
-        ownerArmyId: ownerOf(t.id),
+        unitCount: owner[t.id] != null ? kStartUnitsPerTile : 0,
+        ownerArmyId: owner[t.id],
       ),
   ];
 
   final abilities = _buildInitialAbilities();
 
-  Army army(ArmyId id, ArmyKind kind) => Army(
-    id: id,
-    kind: kind,
-    elmaBalance: 50,
-    totalUnitPool: 10,
-    abilities: Map.unmodifiable(abilities),
-    inventory: const [],
-  );
-
   return GameState(
     territories: territories,
-    army1: army(ArmyId.army1, ArmyKind.human),
-    army2: army(ArmyId.army2, ArmyKind.ai),
+    armies: [
+      for (final id in ids)
+        Army(
+          id: id,
+          kind: id == ArmyId.army1 ? ArmyKind.human : ArmyKind.ai,
+          diamondBalance: kStartDiamonds,
+          totalUnitPool: 10,
+          abilities: Map.unmodifiable(abilities),
+          inventory: const [],
+        ),
+    ],
     currentTurn: 1,
     activeArmyId: ArmyId.army1,
     phase: GamePhase.playing,
@@ -683,53 +718,27 @@ GameState createInitialGameState({
 
 // ─── Initial-state helpers ────────────────────────────────────────────────────
 
-/// The [kStartTileCount] tiles nearest (breadth-first) to [startId].
-Set<int> _startZone(TerritoryGraph graph, int startId) {
+/// The [kStartTileCount] tiles nearest (breadth-first) to [startId] that are
+/// not [taken] by another army.
+Set<int> _startZone(TerritoryGraph graph, int startId, Set<int> taken) {
   final zone = <int>{startId};
   final queue = Queue<int>()..add(startId);
   while (queue.isNotEmpty && zone.length < kStartTileCount) {
     for (final adj in graph.getById(queue.removeFirst()).adjacentIds) {
       if (zone.length >= kStartTileCount) break;
+      if (taken.contains(adj)) continue;
       if (zone.add(adj)) queue.add(adj);
     }
   }
   return zone;
 }
 
-/// Constructs the default [AbilityState] map shared by both armies at game
-/// start.
-///
-/// - [AbilityType.fireBomb] — unlocked (available at turn 0), no cooldown.
-/// - [AbilityType.bombardment] — locked, no cooldown.
-/// - [AbilityType.soldierSpell] — locked, no cooldown.
-/// - [AbilityType.megaBomba] — locked, no cooldown.
-/// - [AbilityType.directLaser] — locked (charge-based), chargeLevel 0,
-///   maxCharge 3, cooldown 0.
+/// Constructs the default [AbilityState] map shared by all armies at game
+/// start: only the Fire Bomb is unlocked; the other cards unlock on their
+/// turn (see [kAbilityUnlockTurns]).
 Map<AbilityType, AbilityState> _buildInitialAbilities() {
   return {
-    AbilityType.fireBomb: const AbilityState(
-      type: AbilityType.fireBomb,
-      isUnlocked: true,
-    ),
-    AbilityType.bombardment: const AbilityState(
-      type: AbilityType.bombardment,
-      isUnlocked: false,
-    ),
-    AbilityType.soldierSpell: const AbilityState(
-      type: AbilityType.soldierSpell,
-      isUnlocked: false,
-    ),
-    AbilityType.megaBomba: const AbilityState(
-      type: AbilityType.megaBomba,
-      isUnlocked: false,
-    ),
-    // Direct Laser is charge-based: always "unlocked", usable once charged.
-    AbilityType.directLaser: const AbilityState(
-      type: AbilityType.directLaser,
-      isUnlocked: true,
-      cooldownTurnsRemaining: 0,
-      chargeLevel: 0,
-      maxCharge: 3,
-    ),
+    for (final type in AbilityType.values)
+      type: AbilityState(type: type, isUnlocked: type == AbilityType.fireBomb),
   };
 }

@@ -10,6 +10,7 @@ import 'package:harita/core/constants.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/territory.dart';
+import 'package:harita/domain/services/economy_service.dart';
 
 // ─── Exceptions ──────────────────────────────────────────────────────────────
 
@@ -173,7 +174,12 @@ class CombatServiceImpl implements CombatService {
       );
     }
 
-    return _replace(state, updatedSource, updatedTarget);
+    // Conquering a diamond mine pays out (Elmas madeni).
+    return awardDiamondMines(
+      state,
+      _replace(state, updatedSource, updatedTarget),
+      attackingArmyId,
+    );
   }
 
   GameState _replace(GameState state, Territory source, Territory target) {

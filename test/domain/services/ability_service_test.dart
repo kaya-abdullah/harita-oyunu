@@ -29,32 +29,16 @@ Territory makeTerritory({
   );
 }
 
-/// Builds a default [AbilityState] for the given [type].
-///
-/// Turn-based abilities default to unlocked; Direct Laser starts locked with
-/// charge 0 / maxCharge 3.
+/// Builds a default [AbilityState] for the given [type] (unlocked).
 AbilityState makeAbilityState(
   AbilityType type, {
   bool isUnlocked = true,
   int? cooldownTurnsRemaining,
-  int? chargeLevel,
-  int? maxCharge,
 }) {
-  if (type == AbilityType.directLaser) {
-    return AbilityState(
-      type: type,
-      isUnlocked: isUnlocked,
-      cooldownTurnsRemaining: cooldownTurnsRemaining ?? 0,
-      chargeLevel: chargeLevel ?? 0,
-      maxCharge: maxCharge ?? 3,
-    );
-  }
   return AbilityState(
     type: type,
     isUnlocked: isUnlocked,
     cooldownTurnsRemaining: cooldownTurnsRemaining,
-    chargeLevel: chargeLevel,
-    maxCharge: maxCharge,
   );
 }
 
@@ -69,15 +53,11 @@ Army makeArmy({
     AbilityType.bombardment: makeAbilityState(AbilityType.bombardment),
     AbilityType.soldierSpell: makeAbilityState(AbilityType.soldierSpell),
     AbilityType.megaBomba: makeAbilityState(AbilityType.megaBomba),
-    AbilityType.directLaser: makeAbilityState(
-      AbilityType.directLaser,
-      chargeLevel: 3, // fully charged so tests can activate it by default
-    ),
   };
   return Army(
     id: id,
     kind: ArmyKind.human,
-    elmaBalance: 100,
+    diamondBalance: 100,
     totalUnitPool: 20,
     abilities: Map.unmodifiable(abilities ?? defaultAbilities),
     inventory: const [],
@@ -86,7 +66,11 @@ Army makeArmy({
 
 /// Builds a straight line of tiles 0 … n-1 (each adjacent to its
 /// neighbours) owned as given by [owners]; units default to 4 per tile.
-GameState makeLine(List<ArmyId?> owners, {List<int>? units}) {
+GameState makeLine(
+  List<ArmyId?> owners, {
+  List<int>? units,
+  Set<int> mines = const {},
+}) {
   final n = owners.length;
   return GameState(
     territories: [
@@ -96,10 +80,12 @@ GameState makeLine(List<ArmyId?> owners, {List<int>? units}) {
           unitCount: units?[i] ?? 4,
           ownerArmyId: owners[i],
           adjacentIds: [if (i > 0) i - 1, if (i < n - 1) i + 1],
-        ),
+        ).copyWith(hasDiamondMine: mines.contains(i)),
     ],
-    army1: makeArmy(id: ArmyId.army1),
-    army2: makeArmy(id: ArmyId.army2),
+    armies: [
+      makeArmy(id: ArmyId.army1),
+      makeArmy(id: ArmyId.army2),
+    ],
     currentTurn: 1,
     activeArmyId: ArmyId.army1,
     phase: GamePhase.playing,
@@ -127,8 +113,10 @@ GameState makeState({
       t0.copyWith(adjacentIds: const [1]),
       t1.copyWith(adjacentIds: const [0]),
     ],
-    army1: army1 ?? makeArmy(id: ArmyId.army1),
-    army2: army2 ?? makeArmy(id: ArmyId.army2),
+    armies: [
+      army1 ?? makeArmy(id: ArmyId.army1),
+      army2 ?? makeArmy(id: ArmyId.army2),
+    ],
     currentTurn: currentTurn,
     activeArmyId: ArmyId.army1,
     phase: GamePhase.playing,
@@ -153,7 +141,6 @@ void main() {
       expect(result, isNot(contains(AbilityType.bombardment)));
       expect(result, isNot(contains(AbilityType.soldierSpell)));
       expect(result, isNot(contains(AbilityType.megaBomba)));
-      expect(result, isNot(contains(AbilityType.directLaser)));
     });
 
     test('turn 10 unlocks fireBomb + bombardment', () {
@@ -178,7 +165,7 @@ void main() {
       expect(result, isNot(contains(AbilityType.megaBomba)));
     });
 
-    test('turn 45 unlocks all four turn-based abilities', () {
+    test('turn 45 unlocks all four abilities', () {
       final result = service.getAbilitiesToUnlock(45);
       expect(
         result,
@@ -189,8 +176,6 @@ void main() {
           AbilityType.megaBomba,
         ]),
       );
-      // directLaser is charge-based — never returned here.
-      expect(result, isNot(contains(AbilityType.directLaser)));
     });
 
     test('turn 9 does not unlock bombardment', () {
@@ -313,32 +298,6 @@ void main() {
       );
     });
 
-    test(
-      'throws InsufficientChargeException when Direct Laser not fully charged',
-      () {
-        final underchargedArmy = makeArmy(
-          abilities: {
-            AbilityType.directLaser: makeAbilityState(
-              AbilityType.directLaser,
-              chargeLevel: 1,
-              maxCharge: 3,
-            ),
-          },
-        );
-        final state = makeState(army1: underchargedArmy);
-
-        expect(
-          () => service.activateAbility(
-            state: state,
-            armyId: ArmyId.army1,
-            ability: AbilityType.directLaser,
-            targetTerritoryId: 1,
-          ),
-          throwsA(isA<InsufficientChargeException>()),
-        );
-      },
-    );
-
     test('throws InvalidTargetException for unknown territory id', () {
       final state = makeState();
       expect(
@@ -386,7 +345,7 @@ void main() {
     const a1 = ArmyId.army1;
     const a2 = ArmyId.army2;
 
-    test('fireBomb captures exactly 1 tile', () {
+    test('fireBomb captures exactly 2 tiles', () {
       final state = makeLine([a1, a2, a2, a2, a2]);
       final r = service.activateAbility(
         state: state,
@@ -396,12 +355,13 @@ void main() {
       );
       expect(r.territories[1].ownerArmyId, a1);
       expect(r.territories[1].unitCount, kCapturedTileUnits);
-      expect(r.territories[2].ownerArmyId, a2);
-      expect(r.territories[2].unitCount, 4);
+      expect(r.territories[2].ownerArmyId, a1);
+      expect(r.territories[3].ownerArmyId, a2);
+      expect(r.territories[3].unitCount, 4);
     });
 
-    test('bombardment captures exactly 3 tiles', () {
-      final state = makeLine([a1, a2, a2, a2, a2, a2]);
+    test('bombardment captures exactly 8 tiles', () {
+      final state = makeLine([a1, ...List.filled(10, a2)]);
       final r = service.activateAbility(
         state: state,
         armyId: a1,
@@ -409,31 +369,18 @@ void main() {
         targetTerritoryId: 1,
       );
       final owners = r.territories.map((t) => t.ownerArmyId).toList();
-      expect(owners, [a1, a1, a1, a1, a2, a2]);
+      expect(owners, [...List.filled(1 + 8, a1), a2, a2]);
     });
 
-    test('directLaser (instant 🔫 card) captures exactly 5 tiles', () {
-      final state = makeLine([a1, null, a2, null, a2, a2, a2]);
-      final r = service.activateAbility(
-        state: state,
-        armyId: a1,
-        ability: AbilityType.directLaser,
-        targetTerritoryId: 1,
-      );
-      final captured = r.territories.where((t) => t.ownerArmyId == a1).length;
-      expect(captured, 1 + 5);
-      expect(r.territories[6].ownerArmyId, a2);
-    });
-
-    test('megaBomba captures 9 tiles', () {
-      final state = makeLine([a1, ...List.filled(12, a2)]);
+    test('megaBomba captures 25 tiles', () {
+      final state = makeLine([a1, ...List.filled(30, a2)]);
       final r = service.activateAbility(
         state: state,
         armyId: a1,
         ability: AbilityType.megaBomba,
         targetTerritoryId: 1,
       );
-      expect(r.territories.where((t) => t.ownerArmyId == a1).length, 1 + 9);
+      expect(r.territories.where((t) => t.ownerArmyId == a1).length, 1 + 25);
     });
 
     test('captured tiles lose their units and keep the captured unit', () {
@@ -454,7 +401,7 @@ void main() {
       final r = service.activateAbility(
         state: state,
         armyId: a1,
-        ability: AbilityType.directLaser,
+        ability: AbilityType.bombardment,
         targetTerritoryId: 1,
       );
       expect(r.territories.every((t) => t.ownerArmyId == a1), isTrue);
@@ -488,7 +435,7 @@ void main() {
     });
 
     test('capturing the area can be neutral land too', () {
-      final state = makeLine([a1, null, null], units: [4, 0, 0]);
+      final state = makeLine([a1, null, null, null], units: [4, 0, 0, 0]);
       final r = service.activateAbility(
         state: state,
         armyId: a1,
@@ -496,14 +443,39 @@ void main() {
         targetTerritoryId: 1,
       );
       expect(r.territories[1].ownerArmyId, a1);
-      expect(r.territories[2].ownerArmyId, isNull);
+      expect(r.territories[2].ownerArmyId, a1);
+      expect(r.territories[3].ownerArmyId, isNull);
+    });
+
+    test('a captured diamond mine pays 250 diamonds', () {
+      final state = makeLine([a1, a2, a2, a2], mines: {2});
+      final before = state.army1.diamondBalance;
+      final r = service.activateAbility(
+        state: state,
+        armyId: a1,
+        ability: AbilityType.fireBomb,
+        targetTerritoryId: 1,
+      );
+      expect(r.territories[2].ownerArmyId, a1);
+      expect(r.army1.diamondBalance, before + kDiamondMineReward);
+      expect(r.army2.diamondBalance, state.army2.diamondBalance);
+    });
+
+    test('a mine outside the captured area pays nothing', () {
+      final state = makeLine([a1, a2, a2, a2], mines: {3});
+      final r = service.activateAbility(
+        state: state,
+        armyId: a1,
+        ability: AbilityType.fireBomb,
+        targetTerritoryId: 1,
+      );
+      expect(r.army1.diamondBalance, state.army1.diamondBalance);
     });
 
     test('kAbilityCaptureTiles matches the requested sizes', () {
-      expect(kAbilityCaptureTiles[AbilityType.fireBomb], 1);
-      expect(kAbilityCaptureTiles[AbilityType.bombardment], 3);
-      expect(kAbilityCaptureTiles[AbilityType.directLaser], 5);
-      expect(kAbilityCaptureTiles[AbilityType.megaBomba], 9);
+      expect(kAbilityCaptureTiles[AbilityType.fireBomb], 2);
+      expect(kAbilityCaptureTiles[AbilityType.bombardment], 8);
+      expect(kAbilityCaptureTiles[AbilityType.megaBomba], 25);
       expect(kAbilityCaptureTiles.containsKey(AbilityType.soldierSpell), false);
     });
   });
@@ -566,55 +538,19 @@ void main() {
     );
   });
 
-  // ── activateAbility — directLaser ─────────────────────────────────────────
+  // ── activateAbility — once per turn ───────────────────────────────────────
 
-  group('activateAbility — directLaser', () {
-    test('sets cooldown to 3 turns after activation', () {
-      final state = makeState();
+  group('activateAbility — once per turn', () {
+    test('a used card goes on a 1-turn cooldown', () {
       final result = service.activateAbility(
-        state: state,
+        state: makeState(),
         armyId: ArmyId.army1,
-        ability: AbilityType.directLaser,
+        ability: AbilityType.fireBomb,
         targetTerritoryId: 1,
       );
       expect(
-        result.army1.abilities[AbilityType.directLaser]!.cooldownTurnsRemaining,
-        kDirectLaserCooldown,
-      );
-    });
-
-    test('resets charge to 0 after activation', () {
-      final state = makeState();
-      final result = service.activateAbility(
-        state: state,
-        armyId: ArmyId.army1,
-        ability: AbilityType.directLaser,
-        targetTerritoryId: 1,
-      );
-      expect(result.army1.abilities[AbilityType.directLaser]!.chargeLevel, 0);
-    });
-
-    test('activates when chargeLevel == maxCharge (exactly full)', () {
-      final fullyCharged = makeArmy(
-        abilities: {
-          AbilityType.directLaser: makeAbilityState(
-            AbilityType.directLaser,
-            chargeLevel: 3,
-            maxCharge: 3,
-            cooldownTurnsRemaining: 0,
-          ),
-        },
-      );
-      final state = makeState(army1: fullyCharged);
-
-      expect(
-        () => service.activateAbility(
-          state: state,
-          armyId: ArmyId.army1,
-          ability: AbilityType.directLaser,
-          targetTerritoryId: 1,
-        ),
-        returnsNormally,
+        result.army1.abilities[AbilityType.fireBomb]!.cooldownTurnsRemaining,
+        kAbilityPerTurnCooldown,
       );
     });
   });
@@ -693,88 +629,6 @@ void main() {
         result.abilities[AbilityType.fireBomb]!.cooldownTurnsRemaining,
         isNull,
       );
-    });
-
-    test('Direct Laser charge increments when cooldown is 0 and not full', () {
-      final army = makeArmy(
-        abilities: {
-          AbilityType.directLaser: makeAbilityState(
-            AbilityType.directLaser,
-            cooldownTurnsRemaining: 0,
-            chargeLevel: 1,
-            maxCharge: 3,
-          ),
-        },
-      );
-      final result = service.tickCooldowns(army);
-      expect(result.abilities[AbilityType.directLaser]!.chargeLevel, 2);
-    });
-
-    test('Direct Laser charge does NOT increment when on cooldown', () {
-      final army = makeArmy(
-        abilities: {
-          AbilityType.directLaser: makeAbilityState(
-            AbilityType.directLaser,
-            cooldownTurnsRemaining: 2,
-            chargeLevel: 0,
-            maxCharge: 3,
-          ),
-        },
-      );
-      final result = service.tickCooldowns(army);
-      expect(result.abilities[AbilityType.directLaser]!.chargeLevel, 0);
-    });
-
-    test('Direct Laser charge stays at maxCharge when already full', () {
-      final army = makeArmy(
-        abilities: {
-          AbilityType.directLaser: makeAbilityState(
-            AbilityType.directLaser,
-            cooldownTurnsRemaining: 0,
-            chargeLevel: 3,
-            maxCharge: 3,
-          ),
-        },
-      );
-      final result = service.tickCooldowns(army);
-      expect(result.abilities[AbilityType.directLaser]!.chargeLevel, 3);
-    });
-
-    test('Direct Laser cooldown is decremented each tick', () {
-      final army = makeArmy(
-        abilities: {
-          AbilityType.directLaser: makeAbilityState(
-            AbilityType.directLaser,
-            cooldownTurnsRemaining: 3,
-            chargeLevel: 0,
-            maxCharge: 3,
-          ),
-        },
-      );
-      Army current = army;
-      // Tick 1: cooldown 3 → 2, no charge (still on cooldown after tick)
-      current = service.tickCooldowns(current);
-      expect(
-        current.abilities[AbilityType.directLaser]!.cooldownTurnsRemaining,
-        2,
-      );
-      expect(current.abilities[AbilityType.directLaser]!.chargeLevel, 0);
-
-      // Tick 2: cooldown 2 → 1, no charge
-      current = service.tickCooldowns(current);
-      expect(
-        current.abilities[AbilityType.directLaser]!.cooldownTurnsRemaining,
-        1,
-      );
-      expect(current.abilities[AbilityType.directLaser]!.chargeLevel, 0);
-
-      // Tick 3: cooldown 1 → 0, charge increments 0 → 1
-      current = service.tickCooldowns(current);
-      expect(
-        current.abilities[AbilityType.directLaser]!.cooldownTurnsRemaining,
-        0,
-      );
-      expect(current.abilities[AbilityType.directLaser]!.chargeLevel, 1);
     });
 
     test('returns a new immutable Army instance', () {

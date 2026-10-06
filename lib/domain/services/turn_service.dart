@@ -22,10 +22,11 @@ abstract class TurnService {
   /// Processing order (Requirements 8.1, 8.2):
   /// 1. Determine the *ending* army from [GameState.activeArmyId].
   /// 2. Apply income to the ending army via [EconomyService.applyTurnIncome].
-  /// 3. Tick cooldowns (and increment Direct Laser charge) for the ending army
-  ///    via [AbilityService.tickCooldowns].
-  /// 4. Switch [GameState.activeArmyId] to the other army.
-  /// 5. If switching FROM army2 BACK TO army1, increment [GameState.currentTurn].
+  /// 3. Tick its ability cooldowns via [AbilityService.tickCooldowns].
+  /// 4. Pass the turn to the next army (in [GameState.armies] order) that
+  ///    still owns land; eliminated armies are skipped.
+  /// 5. When play wraps around to the first army, increment
+  ///    [GameState.currentTurn].
   /// 6. Check for victory; if found, set [GameState.phase] to
   ///    [GamePhase.victory] and populate [GameState.winnerId].
   ///
@@ -61,16 +62,10 @@ class TurnServiceImpl implements TurnService {
   @override
   GameState endTurn(GameState state) {
     final endingArmyId = state.activeArmyId;
-    final nextArmyId = endingArmyId == ArmyId.army1
-        ? ArmyId.army2
-        : ArmyId.army1;
 
-    // Step 1 — resolve the ending army object.
-    var endingArmy = endingArmyId == ArmyId.army1 ? state.army1 : state.army2;
-
-    // Step 2 — apply income (Elma + soldiers) to the ending army, based on
-    //           the current territory ownership snapshot (Requirements 8.2).
-    //           A bot on "Zor" difficulty receives extra soldiers.
+    // Steps 1–3 — income (diamonds + soldiers) and cooldowns for the ending
+    // army. A bot on "Zor" difficulty receives extra soldiers.
+    var endingArmy = state.activeArmy;
     final bonus =
         endingArmy.kind == ArmyKind.ai && state.difficulty == AiDifficulty.hard
         ? kHardAiBonusSoldiers
@@ -80,34 +75,37 @@ class TurnServiceImpl implements TurnService {
       state.territories,
       bonusSoldiers: bonus,
     );
-
-    // Step 3 — tick cooldowns and increment Direct Laser charge.
     endingArmy = _ability.tickCooldowns(endingArmy);
 
-    // Step 4 — switch active army.
-    // Step 5 — increment turn counter when switching army2 → army1
-    //           (i.e., both armies have acted).
-    final nextTurn = (endingArmyId == ArmyId.army2)
+    // Steps 4–5 — next living army; a new round starts when play wraps.
+    final order = [for (final a in state.armies) a.id];
+    final alive = state.armiesAlive.toSet();
+    final from = order.indexOf(endingArmyId);
+    var nextIndex = from;
+    for (var step = 1; step <= order.length; step++) {
+      final i = (from + step) % order.length;
+      if (alive.contains(order[i]) || step == order.length) {
+        nextIndex = i;
+        break;
+      }
+    }
+    final nextTurn = nextIndex <= from
         ? state.currentTurn + 1
         : state.currentTurn;
 
-    // Step 4b — apply turn-based ability unlocks to both armies for the
-    //            turn that is about to be played, so an ability unlocks
-    //            exactly when its turn is reached (Requirements 6.2–6.4).
-    final army1 = _ability.applyTurnUnlocks(
-      endingArmyId == ArmyId.army1 ? endingArmy : state.army1,
-      nextTurn,
-    );
-    final army2 = _ability.applyTurnUnlocks(
-      endingArmyId == ArmyId.army2 ? endingArmy : state.army2,
-      nextTurn,
-    );
+    // Apply turn-based ability unlocks to every army for the turn that is
+    // about to be played (Requirements 6.2–6.4).
+    final armies = [
+      for (final a in state.armies)
+        _ability.applyTurnUnlocks(
+          a.id == endingArmyId ? endingArmy : a,
+          nextTurn,
+        ),
+    ];
 
-    // Build updated state with the modified army and the control transfer.
     var nextState = state.copyWith(
-      army1: army1,
-      army2: army2,
-      activeArmyId: nextArmyId,
+      armies: armies,
+      activeArmyId: order[nextIndex],
       currentTurn: nextTurn,
     );
 

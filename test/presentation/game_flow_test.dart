@@ -70,7 +70,6 @@ void main() {
     expect(s.currentTurn, 1);
     expect(s.activeArmyId, ArmyId.army1);
     expect(s.army1.abilities[AbilityType.fireBomb]!.isUnlocked, isTrue);
-    expect(s.army1.abilities[AbilityType.directLaser]!.isUnlocked, isTrue);
     expect(s.army1.abilities[AbilityType.bombardment]!.isUnlocked, isFalse);
     expect(
       s.territories.where((t) => t.ownerArmyId == ArmyId.army1),
@@ -129,7 +128,7 @@ void main() {
     expect(c.read(gameProvider).army1.totalUnitPool, 0);
     expect(c.read(gameProvider).territories[dst].unitCount, before + pool);
 
-    final elmaBefore = c.read(gameProvider).army1.elmaBalance;
+    final diamondsBefore = c.read(gameProvider).army1.diamondBalance;
     final aiOwnedBefore = c
         .read(gameProvider)
         .territories
@@ -145,7 +144,11 @@ void main() {
     final s = c.read(gameProvider);
     expect(s.activeArmyId, ArmyId.army1);
     expect(s.currentTurn, 2);
-    expect(s.army1.elmaBalance, greaterThan(elmaBefore));
+    // 80 diamonds every turn (plus 250 for any mine captured).
+    expect(
+      s.army1.diamondBalance - diamondsBefore,
+      anyOf(kDiamondsPerTurn, kDiamondsPerTurn + kDiamondMineReward),
+    );
     final owned = s.territories
         .where((t) => t.ownerArmyId == ArmyId.army1)
         .length;
@@ -190,12 +193,15 @@ void main() {
       ArmyId.army2,
     );
 
-    // Fire Bomb on a bordering tile captures exactly that one tile.
+    // Fire Bomb on a bordering tile captures that tile and one more.
     final ownedBefore = _count(c.read(gameProvider), ArmyId.army1);
     final (_, target) = _ownBorder(c.read(gameProvider), ArmyId.army1);
     n.onTerritoryTapped(target);
     expect(c.read(gameProvider).territories[target].ownerArmyId, ArmyId.army1);
-    expect(_count(c.read(gameProvider), ArmyId.army1), ownedBefore + 1);
+    expect(
+      _count(c.read(gameProvider), ArmyId.army1),
+      ownedBefore + kFireBombTiles,
+    );
     expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.abilityUsed);
     expect(c.read(armedAbilityProvider), isNull);
 
@@ -213,7 +219,7 @@ void main() {
     );
     final st = c.read(gameProvider);
     // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
-    n.state = st.copyWith(army1: st.army1.copyWith(elmaBalance: 1000));
+    n.state = st.withArmy(st.army1.copyWith(diamondBalance: 1000));
     expect(n.purchaseItem(pack), isTrue);
     n.armAbility(AbilityType.fireBomb);
     expect(c.read(armedAbilityProvider), AbilityType.fireBomb);
@@ -223,14 +229,14 @@ void main() {
     expect(c.read(gameProvider).army1.inventory, isEmpty);
   });
 
-  test('purchase with insufficient Elma is rejected', () {
+  test('purchase with insufficient diamonds is rejected', () {
     final c = _container(_MemorySaveRepository());
     final n = c.read(gameProvider.notifier);
     final item = kWeaponCatalog.first;
     expect(n.purchaseItem(item), isFalse);
     expect(
       c.read(gameFeedbackProvider)!.kind,
-      GameFeedbackKind.insufficientElma,
+      GameFeedbackKind.insufficientDiamonds,
     );
   });
 
@@ -286,6 +292,149 @@ void main() {
       victory.checkVictory(s.copyWith(territories: territories)),
       ArmyId.army1,
     );
+  });
+
+  test('capturing a diamond mine by attack pays 250 diamonds', () {
+    final c = _container(_MemorySaveRepository());
+    final n = c.read(gameProvider.notifier);
+    final s = createInitialGameState();
+    final mine = s.territories.firstWhere((t) => t.hasDiamondMine);
+    final source = mine.adjacentIds.first;
+    final territories = [
+      for (final t in s.territories)
+        t.id == source
+            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 10)
+            : t.id == mine.id
+            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            : t,
+    ];
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    n.state = s.copyWith(territories: territories);
+    final before = c.read(gameProvider).army1.diamondBalance;
+    n.declareAttack(source, mine.id);
+    final after = c.read(gameProvider);
+    expect(after.territories[mine.id].ownerArmyId, ArmyId.army1);
+    expect(after.army1.diamondBalance, before + kDiamondMineReward);
+    expect(
+      c.read(gameFeedbackProvider)!.kind,
+      GameFeedbackKind.diamondMineCaptured,
+    );
+    expect(c.read(gameFeedbackProvider)!.value, kDiamondMineReward);
+
+    // Moving units onto an own mine pays nothing more.
+    n.declareAttack(mine.id, source);
+    expect(
+      c.read(gameProvider).army1.diamondBalance,
+      after.army1.diamondBalance,
+    );
+  });
+
+  test('every army earns 80 diamonds at the end of its turn', () {
+    final turn = c0().read(turnServiceProvider);
+    final s = createInitialGameState(botCount: 3);
+    final next = turn.endTurn(s);
+    expect(next.army1.diamondBalance, kStartDiamonds + kDiamondsPerTurn);
+    expect(next.army2.diamondBalance, kStartDiamonds);
+    expect(next.activeArmyId, ArmyId.army2);
+  });
+
+  test('turns go round all bots and skip eliminated ones', () {
+    final turn = c0().read(turnServiceProvider);
+    var s = createInitialGameState(botCount: 3);
+    // Bot 2 (army3) loses all its land.
+    s = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          t.ownerArmyId == ArmyId.army3
+              ? t.copyWith(ownerArmyId: null, unitCount: 0)
+              : t,
+      ],
+    );
+    final order = <ArmyId>[];
+    for (var i = 0; i < 6; i++) {
+      s = turn.endTurn(s);
+      order.add(s.activeArmyId);
+    }
+    expect(order, [
+      ArmyId.army2,
+      ArmyId.army4,
+      ArmyId.army1,
+      ArmyId.army2,
+      ArmyId.army4,
+      ArmyId.army1,
+    ]);
+    expect(s.currentTurn, 3);
+  });
+
+  test('victory: the last army standing wins; losing all land loses', () {
+    final victory = c0().read(victoryServiceProvider);
+    final s = createInitialGameState(botCount: 3);
+    expect(victory.checkVictory(s), isNull);
+
+    // Only one bot left besides the player: the game goes on.
+    final oneBotLeft = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          t.ownerArmyId == ArmyId.army2 || t.ownerArmyId == ArmyId.army3
+              ? t.copyWith(ownerArmyId: null, unitCount: 0)
+              : t,
+      ],
+    );
+    expect(victory.checkVictory(oneBotLeft), isNull);
+
+    // Every bot gone: the player wins.
+    final allBotsGone = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          t.ownerArmyId != ArmyId.army1
+              ? t.copyWith(ownerArmyId: null, unitCount: 0)
+              : t,
+      ],
+    );
+    expect(victory.checkVictory(allBotsGone), ArmyId.army1);
+
+    // The player gone: the bot with the most land wins.
+    var bigger = 0;
+    final playerGone = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          if (t.ownerArmyId == ArmyId.army1)
+            t.copyWith(ownerArmyId: null, unitCount: 0)
+          else if (t.ownerArmyId == null && bigger++ < 5)
+            t.copyWith(ownerArmyId: ArmyId.army4, unitCount: 1)
+          else
+            t,
+      ],
+    );
+    expect(victory.checkVictory(playerGone), ArmyId.army4);
+  });
+
+  testWidgets('with six bots every bot plays before the player again', (
+    tester,
+  ) async {
+    final repo = _MemorySaveRepository();
+    final c = _container(repo);
+    c.read(newGameBotCountProvider.notifier).set(kMaxBots);
+    final n = c.read(gameProvider.notifier);
+    final start = c.read(gameProvider);
+    expect(start.armies, hasLength(kMaxBots + 1));
+
+    n.endTurn();
+    expect(n.isHumanTurn, isFalse);
+    await _waitForAi(tester, c);
+
+    final s = c.read(gameProvider);
+    expect(s.activeArmyId, ArmyId.army1);
+    expect(s.currentTurn, 2);
+    for (final bot in s.armies.skip(1)) {
+      expect(
+        s.tilesOwnedBy(bot.id),
+        greaterThan(kStartTileCount),
+        reason: '${bot.id} should have expanded',
+      );
+      expect(bot.diamondBalance, greaterThanOrEqualTo(kStartDiamonds + 80));
+    }
+    expect(repo.saved?.armies, hasLength(kMaxBots + 1));
   });
 
   testWidgets('loading a save taken before the AI turn resumes the AI', (

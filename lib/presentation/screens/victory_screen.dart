@@ -49,15 +49,10 @@ class VictoryScreen extends ConsumerWidget {
 
             // Resolve winner details — fall back gracefully if called outside
             // a victory state (should not happen in normal flow).
-            final winnerId = gameState.winnerId;
-            final winnerName = winnerId == ArmyId.army1
-                ? t.army1Name
-                : winnerId == ArmyId.army2
-                ? t.army2Name
-                : '';
-            final winnerColor = winnerId == ArmyId.army1
-                ? AppTheme.army1Primary
-                : AppTheme.army2Primary;
+            final winnerId = gameState.winnerId ?? ArmyId.army1;
+            final playerWon = winnerId == ArmyId.army1;
+            final winnerName = t.armyName(winnerId.index);
+            final winnerColor = AppTheme.armyColor(winnerId);
             final turn = gameState.currentTurn.toString();
 
             return SafeArea(
@@ -79,12 +74,19 @@ class VictoryScreen extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             // ── Celebration animation ───────────────────────
-                            _CelebrationBurst(color: winnerColor),
+                            _CelebrationBurst(
+                              color: winnerColor,
+                              icon: playerWon
+                                  ? Icons.emoji_events_rounded
+                                  : Icons.flag_rounded,
+                            ),
                             const SizedBox(height: 32),
 
                             // ── Victory title ───────────────────────────────
                             Text(
-                              t.victoryTitle(army: winnerName),
+                              playerWon
+                                  ? t.victoryTitle(army: winnerName)
+                                  : t.defeatTitle,
                               textAlign: TextAlign.center,
                               style: AppTheme.displayStyle.copyWith(
                                 color: winnerColor,
@@ -110,7 +112,9 @@ class VictoryScreen extends ConsumerWidget {
                             const SizedBox(height: 8),
 
                             Text(
-                              t.victorySubtitle,
+                              playerWon
+                                  ? t.victorySubtitle
+                                  : t.defeatSubtitle(winnerName),
                               textAlign: TextAlign.center,
                               style: AppTheme.bodyStyle.copyWith(
                                 color: AppTheme.kTextDark,
@@ -182,9 +186,10 @@ class VictoryScreen extends ConsumerWidget {
 /// Uses an [AnimatedContainer] + [FadeTransition] combo for a simple but
 /// visually satisfying effect — appropriate for the 9–10 age group.
 class _CelebrationBurst extends StatefulWidget {
-  const _CelebrationBurst({required this.color});
+  const _CelebrationBurst({required this.color, required this.icon});
 
   final Color color;
+  final IconData icon;
 
   @override
   State<_CelebrationBurst> createState() => _CelebrationBurstState();
@@ -250,7 +255,7 @@ class _CelebrationBurstState extends State<_CelebrationBurst>
                 ),
               ),
               // Trophy / star icon
-              Icon(Icons.emoji_events_rounded, size: 72, color: widget.color),
+              Icon(widget.icon, size: 72, color: widget.color),
             ],
           ),
         ),

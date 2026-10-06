@@ -12,7 +12,7 @@ class WeaponItem {
   const WeaponItem({
     required this.id,
     required this.nameKey,
-    required this.elmaCost,
+    required this.diamondCost,
     required this.unlockTurn,
     this.requiredAbility,
   });
@@ -23,8 +23,8 @@ class WeaponItem {
   /// Locale key used to look up the display name.
   final String nameKey;
 
-  /// Elma cost to purchase this item.
-  final int elmaCost;
+  /// diamonds cost to purchase this item.
+  final int diamondCost;
 
   /// The earliest turn at which this item appears in the shop.
   final int unlockTurn;
@@ -38,14 +38,14 @@ class WeaponItem {
   WeaponItem copyWith({
     String? id,
     String? nameKey,
-    int? elmaCost,
+    int? diamondCost,
     int? unlockTurn,
     Object? requiredAbility = _sentinel,
   }) {
     return WeaponItem(
       id: id ?? this.id,
       nameKey: nameKey ?? this.nameKey,
-      elmaCost: elmaCost ?? this.elmaCost,
+      diamondCost: diamondCost ?? this.diamondCost,
       unlockTurn: unlockTurn ?? this.unlockTurn,
       requiredAbility: requiredAbility == _sentinel
           ? this.requiredAbility
@@ -61,18 +61,18 @@ class WeaponItem {
     if (other is! WeaponItem) return false;
     return id == other.id &&
         nameKey == other.nameKey &&
-        elmaCost == other.elmaCost &&
+        diamondCost == other.diamondCost &&
         unlockTurn == other.unlockTurn &&
         requiredAbility == other.requiredAbility;
   }
 
   @override
   int get hashCode =>
-      Object.hash(id, nameKey, elmaCost, unlockTurn, requiredAbility);
+      Object.hash(id, nameKey, diamondCost, unlockTurn, requiredAbility);
 
   @override
   String toString() =>
-      'WeaponItem(id: $id, cost: $elmaCost Elma, unlockTurn: $unlockTurn, '
+      'WeaponItem(id: $id, cost: $diamondCost diamonds, unlockTurn: $unlockTurn, '
       'requiredAbility: $requiredAbility)';
 }
 

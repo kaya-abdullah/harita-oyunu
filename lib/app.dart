@@ -4,7 +4,8 @@
 ///  - Riverpod [ProviderScope] for the entire provider tree.
 ///  - [AppTheme.lightTheme] applied to [MaterialApp] (Requirement 10.1, 11.1, 11.2).
 ///  - Locale initialisation from Hive on first build (Requirement 2.3).
-///  - [MainMenuScreen] as the initial route (Requirement 12.2).
+///  - [IntroScreen] (bomb intro over the main menu) as the initial route
+///    (Requirement 12.2).
 library;
 
 import 'package:flutter/material.dart';
@@ -12,7 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/audio_service.dart';
 import 'package:harita/core/theme/app_theme.dart';
-import 'package:harita/presentation/screens/main_menu_screen.dart';
+import 'package:harita/presentation/screens/intro_screen.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 
 /// Root application widget.
@@ -82,10 +83,11 @@ class _AppRootState extends ConsumerState<_AppRoot>
     return MaterialApp(
       title: 'Harita: Kendi İmparatorluğunu Kur',
       debugShowCheckedModeBanner: false,
-      // Apply child-friendly theme with WCAG-compliant contrast and
+      // Apply theme with WCAG-compliant contrast and
       // minimum 16 sp font sizes (Requirements 10.1, 11.1, 11.2).
       theme: AppTheme.lightTheme,
-      home: const MainMenuScreen(),
+      // The atomic-bomb intro plays first, then reveals the main menu.
+      home: const IntroScreen(),
     );
   }
 }

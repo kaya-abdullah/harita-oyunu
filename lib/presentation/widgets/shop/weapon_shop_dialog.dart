@@ -1,7 +1,7 @@
 /// Weapon Shop dialog widget for Harita: Kendi İmparatorluğunu Kur.
 ///
 /// Presents a modal bottom sheet listing all eligible [WeaponItem]s with
-/// their Elma cost and a purchase button.
+/// their diamonds cost and a purchase button.
 ///
 /// Requirements: 4.4, 7.2, 7.3, 7.5, 11.1, 11.2, 11.3
 library;
@@ -11,9 +11,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
+import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/domain/models/weapon_item.dart';
+import 'package:harita/domain/services/ability_service.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/shop_viewmodel.dart';
+import 'package:harita/presentation/widgets/hud/ability_panel.dart';
 
 // ─── WeaponShopDialog ─────────────────────────────────────────────────────────
 
@@ -34,7 +37,7 @@ import 'package:harita/presentation/viewmodels/shop_viewmodel.dart';
 /// - **Normal mode** (active army): each item shows a "Buy" button.
 /// - **Read-only mode** (inactive army, Req 7.5): buy buttons are hidden;
 ///   a banner informs the player this is view-only.
-/// - **Insufficient Elma** (Req 4.4): an inline red error message is shown
+/// - **Insufficient diamonds** (Req 4.4): an inline red error message is shown
 ///   below the item list after a failed purchase.
 /// - **Empty shop**: a message is shown when no items are eligible.
 class WeaponShopDialog extends ConsumerWidget {
@@ -242,7 +245,7 @@ class _ReadOnlyBanner extends StatelessWidget {
 
 // ─── _ErrorBanner ─────────────────────────────────────────────────────────────
 
-/// Shown inline when a purchase was rejected due to insufficient Elma (Req 4.4).
+/// Shown inline when a purchase was rejected due to insufficient diamonds (Req 4.4).
 class _ErrorBanner extends StatelessWidget {
   const _ErrorBanner({required this.message});
 
@@ -287,8 +290,9 @@ class _ErrorBanner extends StatelessWidget {
 /// A single row in the shop item list.
 ///
 /// Shows:
-/// - 🛒 icon + localised weapon name (Req 11.3)
-/// - 🍎 Elma cost with apple emoji for child-friendliness
+/// - the card's colour and icon (the Fire Bomb pack is green) + localised
+///   weapon name (Req 11.3)
+/// - diamond cost
 /// - "Buy" button (hidden in read-only mode, Req 7.5)
 class _ShopItemRow extends StatelessWidget {
   const _ShopItemRow({
@@ -310,17 +314,35 @@ class _ShopItemRow extends StatelessWidget {
     // AppStrings doesn't have a dynamic lookup so we access it via the
     // known ability name keys where possible.
     final weaponName = _resolveWeaponName(item, strings);
+    final ability = kAbilityPackItemIds.entries
+        .firstWhere(
+          (e) => e.value == item.id,
+          orElse: () => const MapEntry(AbilityType.fireBomb, ''),
+        )
+        .key;
+    final cardColor = AppTheme.abilityColor(ability);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+    return Container(
+      key: Key('shop_item_${item.id}'),
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cardColor.withAlpha(30),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cardColor, width: 2),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // ── Weapon icon + name (Req 11.3) ─────────────────────────────
-          const Icon(
-            Icons.military_tech_outlined,
-            color: AppTheme.kAccentPurple,
-            size: 26,
+          // ── Card icon + name (Req 11.3) ───────────────────────────────
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: cardColor,
+            child: Icon(
+              abilityIcon(ability),
+              color: AppTheme.kTextLight,
+              size: 26,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -349,13 +371,24 @@ class _ShopItemRow extends StatelessWidget {
                   spacing: 12,
                   runSpacing: 6,
                   children: [
-                    Text(
-                      '🍎 ${strings.shopCostLabel} ${item.elmaCost}',
-                      style: AppTheme.bodyStyle.copyWith(
-                        fontSize: 16,
-                        color: AppTheme.kAccentGreen,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.diamond_rounded,
+                          color: AppTheme.kDiamond,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${strings.shopCostLabel} ${item.diamondCost}',
+                          style: AppTheme.bodyStyle.copyWith(
+                            fontSize: 16,
+                            color: AppTheme.kTextDark,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                     // Buy button (hidden in read-only mode, Req 7.5)
                     if (!isReadOnly)

@@ -64,7 +64,7 @@ class AppLocalizations {
 /// ```dart
 /// final t = localeService.of(currentLocale);
 /// Text(t.appName);
-/// Text(t.errorInsufficientElma);
+/// Text(t.errorInsufficientDiamonds);
 /// ```
 extension LocaleServiceX on LocaleService {
   /// Returns a [_Strings] helper bound to [locale].
@@ -93,7 +93,6 @@ class AppStrings {
   String get abilityBombardment => _t('ability_bombardment');
   String get abilitySoldierSpell => _t('ability_soldier_spell');
   String get abilityMegaBomba => _t('ability_mega_bomba');
-  String get abilityDirectLaser => _t('ability_direct_laser');
 
   /// e.g. `strings.abilityLocked(turn: '10')`
   String abilityLocked({required String turn}) =>
@@ -104,10 +103,9 @@ class AppStrings {
   String get tooltipBombardment => _t('tooltip_bombardment');
   String get tooltipSoldierSpell => _t('tooltip_soldier_spell');
   String get tooltipMegaBomba => _t('tooltip_mega_bomba');
-  String get tooltipDirectLaser => _t('tooltip_direct_laser');
 
   // ── Errors ───────────────────────────────────────────────────────────────
-  String get errorInsufficientElma => _t('error_insufficient_elma');
+  String get errorInsufficientDiamonds => _t('error_insufficient_diamonds');
   String get errorAbilityLocked => _t('error_ability_locked');
 
   /// e.g. `strings.errorCooldownActive(turns: '2')`
@@ -149,7 +147,7 @@ class AppStrings {
   // ── HUD ──────────────────────────────────────────────────────────────────
   String get turnLabel => _t('turn_label');
   String get activeArmyLabel => _t('active_army_label');
-  String get elmaBalanceLabel => _t('elma_balance_label');
+  String get diamondBalanceLabel => _t('diamond_balance_label');
 
   // ── Shop ─────────────────────────────────────────────────────────────────
   String get shopTitle => _t('shop_title');
@@ -161,6 +159,10 @@ class AppStrings {
   // ── Army names ───────────────────────────────────────────────────────────
   String get army1Name => _t('army_1_name');
   String get army2Name => _t('army_2_name');
+
+  /// Display name of the army with [index] (0 = the player, 1 … 6 = bots),
+  /// e.g. "Mavi Ordu".
+  String armyName(int index) => _t('army_${index + 1}_name');
   String get armyNeutral => _t('army_neutral');
 
   // ── Tutorial ─────────────────────────────────────────────────────────────
@@ -206,9 +208,17 @@ class AppStrings {
   String unitsDeployed({required String count}) =>
       _t('units_deployed', p: {'count': count});
 
-  /// e.g. `strings.laserCharging(charge: '1')`
-  String laserCharging({required String charge}) =>
-      _t('laser_charging', p: {'charge': charge});
+  /// e.g. `strings.diamondMineCaptured(count: '250')`
+  String diamondMineCaptured({required String count}) =>
+      _t('diamond_mine_captured', p: {'count': count});
+
+  String get diamondMineLabel => _t('diamond_mine_label');
+  String get botCountTitle => _t('bot_count_title');
+  String get btnStart => _t('btn_start');
+  String get youLabel => _t('you_label');
+  String get defeatTitle => _t('defeat_title');
+  String defeatSubtitle(String army) =>
+      _t('defeat_subtitle', p: {'army': army});
 
   // ── Bot difficulty ──────────────────────────────────────────────────────
   String get difficultyTitle => _t('difficulty_title');

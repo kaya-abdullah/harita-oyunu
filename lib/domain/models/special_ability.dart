@@ -3,9 +3,9 @@ library;
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
-/// All special combat abilities available in the game.
+/// All special combat abilities ("kartlar") available in the game.
 enum AbilityType {
-  /// Area-damage bomb available from turn 0.
+  /// Fire bomb available from turn 0.
   fireBomb,
 
   /// Artillery bombardment; unlocks at turn 10.
@@ -17,10 +17,6 @@ enum AbilityType {
   /// Most powerful area weapon; unlocks at turn 45.
   /// Labelled "Mega Bomba" (TR) / "Super Blast" (EN) in the UI.
   megaBomba,
-
-  /// Precision beam; activates when fully charged, then enters a 3-turn
-  /// cooldown.
-  directLaser,
 }
 
 // ─── AbilityState ─────────────────────────────────────────────────────────
@@ -33,8 +29,6 @@ class AbilityState {
     required this.type,
     required this.isUnlocked,
     this.cooldownTurnsRemaining,
-    this.chargeLevel,
-    this.maxCharge,
   });
 
   /// Which ability this state describes.
@@ -44,14 +38,8 @@ class AbilityState {
   final bool isUnlocked;
 
   /// Turns remaining before the ability can be used again.
-  /// `null` for abilities without a cooldown mechanism.
+  /// `null` for abilities that have not been used yet.
   final int? cooldownTurnsRemaining;
-
-  /// Current charge level; only relevant for [AbilityType.directLaser].
-  final int? chargeLevel;
-
-  /// Maximum charge level; only relevant for [AbilityType.directLaser].
-  final int? maxCharge;
 
   // ─── Convenience getters ──────────────────────────────────────────────────
 
@@ -59,18 +47,12 @@ class AbilityState {
   bool get isOnCooldown =>
       cooldownTurnsRemaining != null && cooldownTurnsRemaining! > 0;
 
-  /// Returns `true` when the Direct Laser is at full charge and ready to fire.
-  bool get isFullyCharged =>
-      chargeLevel != null && maxCharge != null && chargeLevel! >= maxCharge!;
-
   // ─── copyWith ─────────────────────────────────────────────────────────────
 
   AbilityState copyWith({
     AbilityType? type,
     bool? isUnlocked,
     Object? cooldownTurnsRemaining = _sentinel,
-    Object? chargeLevel = _sentinel,
-    Object? maxCharge = _sentinel,
   }) {
     return AbilityState(
       type: type ?? this.type,
@@ -78,10 +60,6 @@ class AbilityState {
       cooldownTurnsRemaining: cooldownTurnsRemaining == _sentinel
           ? this.cooldownTurnsRemaining
           : cooldownTurnsRemaining as int?,
-      chargeLevel: chargeLevel == _sentinel
-          ? this.chargeLevel
-          : chargeLevel as int?,
-      maxCharge: maxCharge == _sentinel ? this.maxCharge : maxCharge as int?,
     );
   }
 
@@ -93,24 +71,16 @@ class AbilityState {
     if (other is! AbilityState) return false;
     return type == other.type &&
         isUnlocked == other.isUnlocked &&
-        cooldownTurnsRemaining == other.cooldownTurnsRemaining &&
-        chargeLevel == other.chargeLevel &&
-        maxCharge == other.maxCharge;
+        cooldownTurnsRemaining == other.cooldownTurnsRemaining;
   }
 
   @override
-  int get hashCode => Object.hash(
-    type,
-    isUnlocked,
-    cooldownTurnsRemaining,
-    chargeLevel,
-    maxCharge,
-  );
+  int get hashCode => Object.hash(type, isUnlocked, cooldownTurnsRemaining);
 
   @override
   String toString() =>
       'AbilityState(type: $type, unlocked: $isUnlocked, '
-      'cooldown: $cooldownTurnsRemaining, charge: $chargeLevel/$maxCharge)';
+      'cooldown: $cooldownTurnsRemaining)';
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

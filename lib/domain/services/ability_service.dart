@@ -10,11 +10,12 @@ import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/domain/models/territory.dart';
+import 'package:harita/domain/services/economy_service.dart';
 
 // ─── Exceptions ──────────────────────────────────────────────────────────────
 
 /// Thrown when an army attempts to activate an ability that has not been
-/// unlocked yet (turn threshold not reached or charge condition not met).
+/// unlocked yet (turn threshold not reached).
 class LockedAbilityException implements Exception {
   const LockedAbilityException({required this.ability, this.unlockTurn});
 
@@ -22,7 +23,7 @@ class LockedAbilityException implements Exception {
   final AbilityType ability;
 
   /// The turn at which the ability becomes available, if turn-gated.
-  /// `null` for charge-based abilities.
+  /// `null` when unknown.
   final int? unlockTurn;
 
   @override
@@ -55,25 +56,6 @@ class CooldownActiveException implements Exception {
       '$turnsRemaining more turn(s).';
 }
 
-/// Thrown when the Direct Laser is activated without sufficient charge.
-class InsufficientChargeException implements Exception {
-  const InsufficientChargeException({
-    required this.chargeLevel,
-    required this.maxCharge,
-  });
-
-  /// Current charge level.
-  final int chargeLevel;
-
-  /// Charge level required to fire.
-  final int maxCharge;
-
-  @override
-  String toString() =>
-      'InsufficientChargeException: Direct Laser is not fully charged '
-      '($chargeLevel / $maxCharge).';
-}
-
 /// Thrown when the Soldier Spell is aimed at a territory not owned by the
 /// activating army.
 class InvalidTargetException implements Exception {
@@ -94,12 +76,9 @@ class InvalidTargetException implements Exception {
       '$reason';
 }
 
-// ─── Direct Laser constants ──────────────────────────────────────────────────
+// ─── Ability constants ───────────────────────────────────────────────────────
 
-/// Maximum charge level for the Direct Laser.
-const int kDirectLaserMaxCharge = 3;
-
-/// Cooldown applied to non-laser abilities after use: once per turn.
+/// Cooldown applied to abilities after use: once per turn.
 const int kAbilityPerTurnCooldown = 1;
 
 /// Shop pack item id that grants an extra use of each ability.
@@ -108,15 +87,11 @@ const Map<AbilityType, String> kAbilityPackItemIds = {
   AbilityType.bombardment: 'bombardment_pack',
   AbilityType.soldierSpell: 'soldier_spell_pack',
   AbilityType.megaBomba: 'mega_bomba_pack',
-  AbilityType.directLaser: 'laser_pack',
 };
 
 // ─── Unlock schedule ─────────────────────────────────────────────────────────
 
-/// Maps each turn-gated ability to the turn at which it becomes available.
-///
-/// [AbilityType.directLaser] is omitted because it uses a charge mechanism
-/// rather than a fixed turn threshold.
+/// Maps each ability to the turn at which it becomes available.
 const Map<AbilityType, int> kAbilityUnlockTurns = {
   AbilityType.fireBomb: 0,
   AbilityType.bombardment: kTurnUnlockBombardment, // 10
@@ -126,13 +101,10 @@ const Map<AbilityType, int> kAbilityUnlockTurns = {
 
 // ─── Abstract interface ───────────────────────────────────────────────────────
 
-/// Manages the lifecycle of all five special abilities.
+/// Manages the lifecycle of the special abilities.
 abstract class AbilityService {
   /// Returns the list of abilities whose turn threshold is met by
   /// [currentTurn].
-  ///
-  /// [AbilityType.directLaser] is never included because it is not
-  /// turn-gated.
   List<AbilityType> getAbilitiesToUnlock(int currentTurn);
 
   /// Returns a new [Army] with all applicable turn-based abilities unlocked
@@ -147,14 +119,14 @@ abstract class AbilityService {
   /// Validation order:
   /// 1. Ability must be unlocked — throws [LockedAbilityException] otherwise.
   /// 2. Ability must not be on cooldown — throws [CooldownActiveException].
-  /// 3. Direct Laser must be fully charged — throws [InsufficientChargeException].
-  /// 4. Soldier Spell target must be owned by [armyId]; offensive abilities
+  /// 3. Soldier Spell target must be owned by [armyId]; offensive abilities
   ///    must target a tile not owned by [armyId] that borders its land —
   ///    throws [InvalidTargetException].
   ///
-  /// Offensive abilities capture tiles ("minik kare"): Fire Bomb 1, Bombardment
-  /// 3, Direct Laser 5, Mega Bomba 9 (see [captureArea]). Soldier Spell adds
-  /// [kSoldierSpellUnits] units to a friendly tile.
+  /// Offensive abilities capture tiles ("minik kare"): Fire Bomb 2,
+  /// Bombardment 8, Mega Bomba 25 (see [captureArea]); captured diamond
+  /// mines pay [kDiamondMineReward]. Soldier Spell adds [kSoldierSpellUnits]
+  /// units to a friendly tile.
   ///
   /// Returns a new [GameState] with the ability effect applied; the original
   /// [state] is never mutated.
@@ -165,12 +137,7 @@ abstract class AbilityService {
     required int targetTerritoryId,
   });
 
-  /// Returns a new [Army] with all cooldowns decremented by 1 (clamped to 0)
-  /// and the Direct Laser charge incremented if not yet full.
-  ///
-  /// The Direct Laser charge is incremented by 1 only when its cooldown is
-  /// 0 and its current [AbilityState.chargeLevel] is below
-  /// [AbilityState.maxCharge].
+  /// Returns a new [Army] with all cooldowns decremented by 1 (clamped to 0).
   ///
   /// The original [army] is never mutated.
   Army tickCooldowns(Army army);
@@ -225,7 +192,7 @@ class AbilityServiceImpl implements AbilityService {
     required AbilityType ability,
     required int targetTerritoryId,
   }) {
-    final army = armyId == ArmyId.army1 ? state.army1 : state.army2;
+    final army = state.army(armyId);
     final abilityState = army.abilities[ability];
 
     // ── 1. Must be unlocked ──────────────────────────────────────────────
@@ -237,8 +204,7 @@ class AbilityServiceImpl implements AbilityService {
     }
 
     // A purchased shop pack for this ability (if any) lets the army use it
-    // once more even while it is on cooldown / not fully charged. The pack
-    // is consumed in that case.
+    // once more even while it is on cooldown. The pack is consumed then.
     final packIndex = _packIndex(army, ability);
     var consumePack = false;
 
@@ -253,18 +219,7 @@ class AbilityServiceImpl implements AbilityService {
       consumePack = true;
     }
 
-    // ── 3. Direct Laser charge check ─────────────────────────────────────
-    if (ability == AbilityType.directLaser && !abilityState.isFullyCharged) {
-      if (packIndex < 0) {
-        throw InsufficientChargeException(
-          chargeLevel: abilityState.chargeLevel ?? 0,
-          maxCharge: abilityState.maxCharge ?? kDirectLaserMaxCharge,
-        );
-      }
-      consumePack = true;
-    }
-
-    // ── 4. Target validation ─────────────────────────────────────────────
+    // ── 3. Target validation ─────────────────────────────────────────────
     final target = state.territories.cast<Territory?>().firstWhere(
       (t) => t!.id == targetTerritoryId,
       orElse: () => null,
@@ -308,18 +263,17 @@ class AbilityServiceImpl implements AbilityService {
             kAbilityCaptureTiles[ability]!,
           );
 
-    // ── Update army ability state (cooldown / charge reset) ──────────────
+    // ── Update army ability state (cooldown) ─────────────────────────────
     var updatedArmy = _applyPostActivationState(army, ability, abilityState);
     if (consumePack) {
       final inventory = [...updatedArmy.inventory]..removeAt(packIndex);
       updatedArmy = updatedArmy.copyWith(inventory: inventory);
     }
 
-    return state.copyWith(
-      territories: updatedTerritories,
-      army1: armyId == ArmyId.army1 ? updatedArmy : state.army1,
-      army2: armyId == ArmyId.army2 ? updatedArmy : state.army2,
-    );
+    final next = state
+        .withArmy(updatedArmy)
+        .copyWith(territories: updatedTerritories);
+    return awardDiamondMines(state, next, armyId);
   }
 
   // ─── tickCooldowns ───────────────────────────────────────────────────────
@@ -331,35 +285,15 @@ class AbilityServiceImpl implements AbilityService {
     );
 
     updatedAbilities.forEach((type, abilityState) {
-      if (type == AbilityType.directLaser) {
-        // Direct Laser: decrement cooldown, then increment charge when idle.
-        final newCooldown = abilityState.cooldownTurnsRemaining == null
-            ? null
-            : max(0, abilityState.cooldownTurnsRemaining! - 1);
-
-        int? newCharge = abilityState.chargeLevel;
-        final maxCharge = abilityState.maxCharge ?? kDirectLaserMaxCharge;
-
-        // Increment charge only when cooldown has fully expired and the laser
-        // is not yet at max charge.
-        if ((newCooldown == null || newCooldown == 0) &&
-            newCharge != null &&
-            newCharge < maxCharge) {
-          newCharge = newCharge + 1;
-        }
-
+      if (abilityState.cooldownTurnsRemaining != null) {
+        // Decrement by 1, floor at 0.
         updatedAbilities[type] = abilityState.copyWith(
-          cooldownTurnsRemaining: newCooldown,
-          chargeLevel: newCharge,
-        );
-      } else if (abilityState.cooldownTurnsRemaining != null) {
-        // Standard cooldown-bearing ability: decrement by 1, floor at 0.
-        final newCooldown = max(0, abilityState.cooldownTurnsRemaining! - 1);
-        updatedAbilities[type] = abilityState.copyWith(
-          cooldownTurnsRemaining: newCooldown,
+          cooldownTurnsRemaining: max(
+            0,
+            abilityState.cooldownTurnsRemaining! - 1,
+          ),
         );
       }
-      // Abilities with null cooldown are left unchanged.
     });
 
     return army.copyWith(abilities: updatedAbilities);
@@ -400,12 +334,9 @@ class AbilityServiceImpl implements AbilityService {
   bool _bordersArmy(List<Territory> territories, Territory t, ArmyId armyId) =>
       t.adjacentIds.any((id) => _byId(territories, id)?.ownerArmyId == armyId);
 
-  /// Returns a new [Army] copy with the post-activation cooldown / charge
-  /// state applied to [ability].
-  ///
-  /// - Direct Laser: cooldown set to [kDirectLaserCooldown], charge reset to 0.
-  /// - All other abilities: no post-activation cooldown is defined in the
-  ///   current spec; the ability state is left unchanged.
+  /// Returns a new [Army] copy with [ability] put on its once-per-turn
+  /// cooldown, which is cleared when this army's turn ends (see
+  /// [tickCooldowns]).
   Army _applyPostActivationState(
     Army army,
     AbilityType ability,
@@ -414,20 +345,9 @@ class AbilityServiceImpl implements AbilityService {
     final updatedAbilities = Map<AbilityType, AbilityState>.from(
       army.abilities,
     );
-
-    if (ability == AbilityType.directLaser) {
-      updatedAbilities[ability] = abilityState.copyWith(
-        cooldownTurnsRemaining: kDirectLaserCooldown,
-        chargeLevel: 0,
-      );
-    } else {
-      // Other abilities can be used once per turn: a 1-turn cooldown that is
-      // cleared when this army's turn ends (see [tickCooldowns]).
-      updatedAbilities[ability] = abilityState.copyWith(
-        cooldownTurnsRemaining: kAbilityPerTurnCooldown,
-      );
-    }
-
+    updatedAbilities[ability] = abilityState.copyWith(
+      cooldownTurnsRemaining: kAbilityPerTurnCooldown,
+    );
     return army.copyWith(abilities: updatedAbilities);
   }
 }
@@ -436,10 +356,9 @@ class AbilityServiceImpl implements AbilityService {
 
 /// How many tiles each offensive ability captures.
 const Map<AbilityType, int> kAbilityCaptureTiles = {
-  AbilityType.fireBomb: kFireBombTiles, // 1
-  AbilityType.bombardment: kBombardmentTiles, // 3
-  AbilityType.directLaser: kDirectLaserTiles, // 5
-  AbilityType.megaBomba: kMegaBombaTiles, // 9
+  AbilityType.fireBomb: kFireBombTiles, // 2
+  AbilityType.bombardment: kBombardmentTiles, // 8
+  AbilityType.megaBomba: kMegaBombaTiles, // 25
 };
 
 /// Returns the ids of the (up to) [count] tiles an ability aimed at

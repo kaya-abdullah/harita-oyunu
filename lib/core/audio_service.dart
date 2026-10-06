@@ -27,6 +27,12 @@ class AudioService {
   /// Fanfare played when a player wins.
   static const sfxVictory = 'victory.mp3';
 
+  /// Sparkle played when a diamond mine is captured.
+  static const sfxDiamond = 'diamond.mp3';
+
+  /// Atomic-bomb blast of the intro screen.
+  static const sfxNuke = 'nuke.mp3';
+
   /// Subtle click for UI button taps.
   static const sfxButtonTap = 'tap.mp3';
 

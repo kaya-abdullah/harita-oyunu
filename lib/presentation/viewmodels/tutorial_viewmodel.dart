@@ -6,6 +6,7 @@
 /// Requirements: 11.5
 library;
 
+import 'package:flutter/material.dart' show IconData, Icons;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -51,23 +52,23 @@ enum TutorialStep {
     }
   }
 
-  /// The emoji icon representing this step in the UI.
-  String get emoji {
+  /// The icon representing this step in the UI.
+  IconData get icon {
     switch (this) {
       case TutorialStep.map:
-        return '🗺️';
+        return Icons.public_rounded;
       case TutorialStep.territory:
-        return '🏰';
+        return Icons.grid_view_rounded;
       case TutorialStep.resources:
-        return '🍎';
+        return Icons.diamond_rounded;
       case TutorialStep.abilities:
-        return '⚔️';
+        return Icons.local_fire_department_rounded;
       case TutorialStep.shop:
-        return '🛒';
+        return Icons.storefront_rounded;
       case TutorialStep.endTurn:
-        return '⏭️';
+        return Icons.skip_next_rounded;
       case TutorialStep.victory:
-        return '🏆';
+        return Icons.military_tech_rounded;
     }
   }
 }

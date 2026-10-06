@@ -19,7 +19,7 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 /// - [isOpen]       — whether the shop dialog is currently shown.
 /// - [isReadOnly]   — `true` when opened by the inactive army (Req 7.5).
 /// - [errorMessage] — non-null when the last purchase was rejected due to
-///                    insufficient Elma (Req 4.4).
+///                    insufficient diamonds (Req 4.4).
 class ShopState {
   const ShopState({
     required this.items,
@@ -47,7 +47,7 @@ class ShopState {
   final bool isReadOnly;
 
   /// Set to a locale-key string when the last purchase failed due to
-  /// insufficient Elma; `null` when no error is active.
+  /// insufficient diamonds; `null` when no error is active.
   final String? errorMessage;
 
   // ─── copyWith ─────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ class ShopState {
 ///   (Requirement 7.5).
 /// - Delegates purchase logic to [EconomyService.purchaseItem] and propagates
 ///   the resulting army update back to [gameProvider] (Requirements 7.2, 7.3).
-/// - Surfaces [InsufficientElmaException] as an [ShopState.errorMessage] for
+/// - Surfaces [InsufficientDiamondsException] as an [ShopState.errorMessage] for
 ///   the UI to display (Requirement 4.4).
 class ShopNotifier extends Notifier<ShopState> {
   // ─── Lazily resolved service references ──────────────────────────────────
@@ -126,9 +126,7 @@ class ShopNotifier extends Notifier<ShopState> {
     final gameState = ref.read(gameProvider);
 
     // Resolve the army object for the requesting side.
-    final army = requestingArmy == ArmyId.army1
-        ? gameState.army1
-        : gameState.army2;
+    final army = gameState.army(requestingArmy);
 
     final eligibleItems = _economy.getEligibleShopItems(
       army,
@@ -158,7 +156,7 @@ class ShopNotifier extends Notifier<ShopState> {
   /// - Does nothing if the shop is in read-only mode (Req 7.5).
   ///
   /// On success:
-  /// - Deducts Elma and adds the item to the army's inventory via
+  /// - Deducts diamonds and adds the item to the army's inventory via
   ///   [EconomyService.purchaseItem].
   /// - Writes the updated army back to [gameProvider] so all game-state
   ///   consumers reflect the change (Req 7.3).
@@ -166,8 +164,8 @@ class ShopNotifier extends Notifier<ShopState> {
   ///   ability states or balance).
   /// - Clears any active error message.
   ///
-  /// On failure ([InsufficientElmaException]):
-  /// - Sets [ShopState.errorMessage] to `'error_insufficient_elma'` (Req 4.4).
+  /// On failure ([InsufficientDiamondsException]):
+  /// - Sets [ShopState.errorMessage] to `'error_insufficient_diamonds'` (Req 4.4).
   /// - Leaves the game state unchanged.
   void purchaseItem(WeaponItem item) {
     // Read-only shops do not allow purchases.
@@ -180,14 +178,14 @@ class ShopNotifier extends Notifier<ShopState> {
     }
 
     final army = ref.read(gameProvider).activeArmy;
-    if (army.elmaBalance < item.elmaCost) {
+    if (army.diamondBalance < item.diamondCost) {
       // Surface a locale-key so the UI can display the correct message.
-      state = state.copyWith(errorMessage: 'error_insufficient_elma');
+      state = state.copyWith(errorMessage: 'error_insufficient_diamonds');
       return;
     }
 
     if (!notifier.purchaseItem(item)) {
-      state = state.copyWith(errorMessage: 'error_insufficient_elma');
+      state = state.copyWith(errorMessage: 'error_insufficient_diamonds');
       return;
     }
 

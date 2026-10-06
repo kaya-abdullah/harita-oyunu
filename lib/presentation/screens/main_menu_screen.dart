@@ -1,6 +1,6 @@
 /// Main menu screen for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// Displays the app title, New Game (→ bot difficulty picker), Resume (if save exists), Language toggle
+/// Displays the app title, New Game (→ bot count + difficulty picker), Resume (if save exists), Language toggle
 /// (TR / EN), and Tutorial buttons.
 ///
 /// Requirements: 2.1, 2.2, 2.3, 9.2, 12.2, 11.1, 11.3
@@ -149,16 +149,21 @@ class MainMenuScreen extends ConsumerWidget {
       if (!context.mounted) return;
     }
 
-    // Let the player choose how strong the bot is.
+    // Let the player choose how many bots play and how strong they are.
     final strings = ref
         .read(localeServiceProvider)
         .value
         ?.of(ref.read(localeProvider));
     if (strings == null) return;
-    final difficulty = await showDifficultyPicker(context, strings);
-    if (difficulty == null || !context.mounted) return;
+    final choice = await showNewGamePicker(
+      context,
+      strings,
+      initialBots: ref.read(newGameBotCountProvider),
+    );
+    if (choice == null || !context.mounted) return;
     ref.read(audioServiceProvider).playSfx(AudioService.sfxButtonTap);
-    ref.read(newGameDifficultyProvider.notifier).set(difficulty);
+    ref.read(newGameDifficultyProvider.notifier).set(choice.difficulty);
+    ref.read(newGameBotCountProvider.notifier).set(choice.bots);
 
     // Reset to a fresh game state by rebuilding the notifiers.
     ref.invalidate(gameProvider);

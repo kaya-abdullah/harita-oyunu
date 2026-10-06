@@ -75,8 +75,8 @@ class TerritoryGraph {
     required this.cols,
     required this.rows,
     required this.tileSize,
-    required this.playerStartId,
-    required this.botStartId,
+    required this.startIds,
+    required this.outlines,
   }) : _positions = positions;
 
   /// All tiles of the Africa map in id-ascending order.
@@ -91,11 +91,20 @@ class TerritoryGraph {
   /// Edge length of one tile in map world units.
   final double tileSize;
 
-  /// Tile at which the human player (Army 1) starts — one end of Africa.
-  final int playerStartId;
+  /// Start tiles in army order: the human player first (Casablanca), then
+  /// bot 1 (Cape Town, the other end of Africa), bot 2 … bot 6.
+  final List<int> startIds;
 
-  /// Tile at which the bot (Army 2) starts — the other end of Africa.
-  final int botStartId;
+  /// Real country outlines (Natural Earth) in map world units, keyed by
+  /// region name key. Drawn under the tiles so Africa looks like a normal
+  /// map. Each outline is a closed ring of points.
+  final Map<String, List<List<Offset>>> outlines;
+
+  /// Tile at which the human player (Army 1) starts.
+  int get playerStartId => startIds.first;
+
+  /// Tile at which the first bot (Army 2) starts.
+  int get botStartId => startIds[1];
 
   /// Map width in world units.
   double get width => cols * tileSize;
@@ -134,6 +143,7 @@ class TerritoryGraph {
   static TerritoryGraph parse(String jsonString) {
     final decoded = jsonDecode(jsonString) as Map<String, dynamic>;
     final rawList = decoded['territories'] as List<dynamic>;
+    final tileSize = (decoded['tileSize'] as num? ?? 24).toDouble();
 
     // ── Parse ──────────────────────────────────────────────────────────────
     final territories = <Territory>[];
@@ -149,10 +159,10 @@ class TerritoryGraph {
           .map((e) => e as int)
           .toList(growable: false);
       final baseCapacity = map['baseCapacity'] as int?;
-      final x = (map['x'] as num).toDouble();
-      final y = (map['y'] as num).toDouble();
       final col = (map['col'] as num?)?.toInt() ?? 0;
       final row = (map['row'] as num?)?.toInt() ?? 0;
+      final x = (map['x'] as num?)?.toDouble() ?? (col + 0.5) * tileSize;
+      final y = (map['y'] as num?)?.toDouble() ?? (row + 0.5) * tileSize;
 
       final type = _parseTerritoryType(typeStr, id);
 
@@ -165,6 +175,7 @@ class TerritoryGraph {
           unitCount: 0,
           ownerArmyId: null,
           baseCapacity: baseCapacity,
+          hasDiamondMine: map['diamondMine'] as bool? ?? false,
         ),
       );
 
@@ -184,22 +195,44 @@ class TerritoryGraph {
     _validateBidirectionality(territories);
     _validateBaseCapacities(territories);
 
-    final playerStartId = decoded['playerStartId'] as int? ?? 0;
-    final botStartId = decoded['botStartId'] as int? ?? territories.length - 1;
-    for (final startId in [playerStartId, botStartId]) {
+    final startIds =
+        (decoded['startIds'] as List<dynamic>?)?.cast<int>() ??
+        [
+          decoded['playerStartId'] as int? ?? 0,
+          decoded['botStartId'] as int? ?? territories.length - 1,
+        ];
+    if (startIds.length < 2) {
+      throw const TerritoryGraphException('At least two start tiles needed.');
+    }
+    for (final startId in startIds) {
       if (startId < 0 || startId >= territories.length) {
         throw TerritoryGraphException('Start tile $startId does not exist.');
       }
     }
+
+    final outlines = <String, List<List<Offset>>>{};
+    final rawOutlines = decoded['outlines'] as Map<String, dynamic>? ?? {};
+    rawOutlines.forEach((key, rings) {
+      outlines['region_$key'] = [
+        for (final ring in rings as List<dynamic>)
+          [
+            for (var i = 0; i + 1 < (ring as List<dynamic>).length; i += 2)
+              Offset(
+                (ring[i] as num).toDouble(),
+                (ring[i + 1] as num).toDouble(),
+              ),
+          ],
+      ];
+    });
 
     return TerritoryGraph._(
       territories: List.unmodifiable(territories),
       positions: Map.unmodifiable(positions),
       cols: decoded['cols'] as int? ?? 1,
       rows: decoded['rows'] as int? ?? 1,
-      tileSize: (decoded['tileSize'] as num? ?? 24).toDouble(),
-      playerStartId: playerStartId,
-      botStartId: botStartId,
+      tileSize: tileSize,
+      startIds: List.unmodifiable(startIds),
+      outlines: Map.unmodifiable(outlines),
     );
   }
 

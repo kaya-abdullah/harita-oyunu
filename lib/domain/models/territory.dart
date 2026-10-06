@@ -31,6 +31,7 @@ class Territory {
     required this.unitCount,
     this.ownerArmyId,
     this.baseCapacity,
+    this.hasDiamondMine = false,
   });
 
   /// Unique identifier, 0 … kTerritoryCount - 1.
@@ -55,6 +56,10 @@ class Territory {
   /// [TerritoryType.smallBase] territories.
   final int? baseCapacity;
 
+  /// Whether a diamond mine sits on this tile. Capturing it pays
+  /// [kDiamondMineReward] diamonds.
+  final bool hasDiamondMine;
+
   // ─── copyWith ─────────────────────────────────────────────────────────────
 
   Territory copyWith({
@@ -66,6 +71,7 @@ class Territory {
     // Use a sentinel so callers can explicitly clear the owner (set to null).
     Object? ownerArmyId = _sentinel,
     Object? baseCapacity = _sentinel,
+    bool? hasDiamondMine,
   }) {
     return Territory(
       id: id ?? this.id,
@@ -79,6 +85,7 @@ class Territory {
       baseCapacity: baseCapacity == _sentinel
           ? this.baseCapacity
           : baseCapacity as int?,
+      hasDiamondMine: hasDiamondMine ?? this.hasDiamondMine,
     );
   }
 
@@ -94,7 +101,8 @@ class Territory {
         _listEquals(adjacentIds, other.adjacentIds) &&
         unitCount == other.unitCount &&
         ownerArmyId == other.ownerArmyId &&
-        baseCapacity == other.baseCapacity;
+        baseCapacity == other.baseCapacity &&
+        hasDiamondMine == other.hasDiamondMine;
   }
 
   @override
@@ -106,6 +114,7 @@ class Territory {
     unitCount,
     ownerArmyId,
     baseCapacity,
+    hasDiamondMine,
   );
 
   @override

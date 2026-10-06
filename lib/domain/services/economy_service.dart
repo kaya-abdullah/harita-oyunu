@@ -12,27 +12,27 @@ import 'package:harita/domain/models/weapon_item.dart';
 
 // ─── Exceptions ──────────────────────────────────────────────────────────────
 
-/// Thrown when an army attempts to purchase an item with insufficient Elma.
-class InsufficientElmaException implements Exception {
-  const InsufficientElmaException({
-    required this.requiredElma,
-    required this.availableElma,
+/// Thrown when an army attempts to purchase an item with insufficient diamonds.
+class InsufficientDiamondsException implements Exception {
+  const InsufficientDiamondsException({
+    required this.requiredDiamonds,
+    required this.availableDiamonds,
     required this.itemId,
   });
 
-  /// The Elma cost of the item that could not be purchased.
-  final int requiredElma;
+  /// The diamonds cost of the item that could not be purchased.
+  final int requiredDiamonds;
 
-  /// The army's current Elma balance.
-  final int availableElma;
+  /// The army's current diamonds balance.
+  final int availableDiamonds;
 
   /// The id of the item that failed to purchase.
   final String itemId;
 
   @override
   String toString() =>
-      'InsufficientElmaException: cannot purchase "$itemId" — '
-      'requires $requiredElma Elma but army only has $availableElma.';
+      'InsufficientDiamondsException: cannot purchase "$itemId" — '
+      'requires $requiredDiamonds diamonds but army only has $availableDiamonds.';
 }
 
 // ─── Weapon catalog ──────────────────────────────────────────────────────────
@@ -45,37 +45,30 @@ const List<WeaponItem> kWeaponCatalog = [
   WeaponItem(
     id: 'fire_bomb_pack',
     nameKey: 'shop_item_fire_bomb_pack',
-    elmaCost: 220,
+    diamondCost: 220,
     unlockTurn: 0,
     requiredAbility: null,
   ),
   WeaponItem(
     id: 'bombardment_pack',
     nameKey: 'shop_item_bombardment_pack',
-    elmaCost: 300,
+    diamondCost: 300,
     unlockTurn: kTurnUnlockBombardment, // 10
     requiredAbility: AbilityType.bombardment,
   ),
   WeaponItem(
     id: 'soldier_spell_pack',
     nameKey: 'shop_item_soldier_spell_pack',
-    elmaCost: 250,
+    diamondCost: 250,
     unlockTurn: kTurnUnlockSoldierSpell, // 12
     requiredAbility: AbilityType.soldierSpell,
   ),
   WeaponItem(
     id: 'mega_bomba_pack',
     nameKey: 'shop_item_mega_bomba_pack',
-    elmaCost: 500,
+    diamondCost: 500,
     unlockTurn: kTurnUnlockMegaBomba, // 45
     requiredAbility: AbilityType.megaBomba,
-  ),
-  WeaponItem(
-    id: 'laser_pack',
-    nameKey: 'shop_item_laser_pack',
-    elmaCost: 350,
-    unlockTurn: 0,
-    requiredAbility: AbilityType.directLaser,
   ),
 ];
 
@@ -83,11 +76,10 @@ const List<WeaponItem> kWeaponCatalog = [
 
 /// Handles all resource-economy operations for a single army.
 abstract class EconomyService {
-  /// Applies per-turn resource generation to [army] based on owned bases
-  /// in [territories].
+  /// Applies per-turn resource generation to [army] based on its land in
+  /// [territories].
   ///
-  /// - Adds `n × 10` Elma where `n` is the number of bases (bigBase or
-  ///   smallBase) owned by [army].
+  /// - Adds [kDiamondsPerTurn] (80) diamonds.
   /// - Adds [kSoldiersPerTurn] (3) soldier units plus one per
   ///   [kTilesPerBonusSoldier] owned tiles (and [bonusSoldiers]) to
   ///   [army.totalUnitPool].
@@ -102,10 +94,10 @@ abstract class EconomyService {
   /// Attempts to purchase [item] for [army].
   ///
   /// On success, returns a new [Army] with:
-  /// - `elmaBalance` decreased by `item.elmaCost`
+  /// - `diamondBalance` decreased by `item.diamondCost`
   /// - [item] appended to `inventory`
   ///
-  /// Throws [InsufficientElmaException] if `army.elmaBalance < item.elmaCost`.
+  /// Throws [InsufficientDiamondsException] if `army.diamondBalance < item.diamondCost`.
   /// The original [army] is never mutated regardless of outcome.
   Army purchaseItem(Army army, WeaponItem item);
 
@@ -146,23 +138,14 @@ class EconomyServiceImpl implements EconomyService {
     List<Territory> territories, {
     int bonusSoldiers = 0,
   }) {
-    var ownedTiles = 0;
-    var ownedBaseCount = 0;
-    for (final t in territories) {
-      if (t.ownerArmyId != army.id) continue;
-      ownedTiles++;
-      if (t.type == TerritoryType.bigBase ||
-          t.type == TerritoryType.smallBase) {
-        ownedBaseCount++;
-      }
-    }
-
-    final elmaIncome = ownedBaseCount * kElmaPerBase; // n × 10
+    final ownedTiles = territories.where((t) => t.ownerArmyId == army.id);
     final soldiers =
-        kSoldiersPerTurn + ownedTiles ~/ kTilesPerBonusSoldier + bonusSoldiers;
+        kSoldiersPerTurn +
+        ownedTiles.length ~/ kTilesPerBonusSoldier +
+        bonusSoldiers;
 
     return army.copyWith(
-      elmaBalance: army.elmaBalance + elmaIncome,
+      diamondBalance: army.diamondBalance + kDiamondsPerTurn,
       totalUnitPool: army.totalUnitPool + soldiers,
     );
   }
@@ -171,16 +154,16 @@ class EconomyServiceImpl implements EconomyService {
 
   @override
   Army purchaseItem(Army army, WeaponItem item) {
-    if (army.elmaBalance < item.elmaCost) {
-      throw InsufficientElmaException(
-        requiredElma: item.elmaCost,
-        availableElma: army.elmaBalance,
+    if (army.diamondBalance < item.diamondCost) {
+      throw InsufficientDiamondsException(
+        requiredDiamonds: item.diamondCost,
+        availableDiamonds: army.diamondBalance,
         itemId: item.id,
       );
     }
 
     return army.copyWith(
-      elmaBalance: army.elmaBalance - item.elmaCost,
+      diamondBalance: army.diamondBalance - item.diamondCost,
       inventory: [...army.inventory, item],
     );
   }
@@ -194,7 +177,7 @@ class EconomyServiceImpl implements EconomyService {
     int territoryId, {
     int? count,
   }) {
-    final army = armyId == ArmyId.army1 ? state.army1 : state.army2;
+    final army = state.army(armyId);
     final index = state.territories.indexWhere((t) => t.id == territoryId);
     if (index < 0) return state;
     final territory = state.territories[index];
@@ -215,11 +198,7 @@ class EconomyServiceImpl implements EconomyService {
     final updatedArmy = army.copyWith(
       totalUnitPool: army.totalUnitPool - amount,
     );
-    return state.copyWith(
-      territories: territories,
-      army1: armyId == ArmyId.army1 ? updatedArmy : state.army1,
-      army2: armyId == ArmyId.army2 ? updatedArmy : state.army2,
-    );
+    return state.withArmy(updatedArmy).copyWith(territories: territories);
   }
 
   // ─── getEligibleShopItems ─────────────────────────────────────────────────
@@ -240,4 +219,28 @@ class EconomyServiceImpl implements EconomyService {
       return true;
     }).toList();
   }
+}
+
+// ─── Diamond mines ───────────────────────────────────────────────────────────
+
+/// Pays [armyId] [kDiamondMineReward] diamonds for every diamond-mine tile it
+/// owns in [after] but did not own in [before] (i.e. mines it just captured).
+GameState awardDiamondMines(GameState before, GameState after, ArmyId armyId) {
+  var captured = 0;
+  for (var i = 0; i < after.territories.length; i++) {
+    final t = after.territories[i];
+    if (!t.hasDiamondMine || t.ownerArmyId != armyId) continue;
+    final was =
+        i < before.territories.length && before.territories[i].id == t.id
+        ? before.territories[i]
+        : before.territories.firstWhere((b) => b.id == t.id);
+    if (was.ownerArmyId != armyId) captured++;
+  }
+  if (captured == 0) return after;
+  final army = after.army(armyId);
+  return after.withArmy(
+    army.copyWith(
+      diamondBalance: army.diamondBalance + captured * kDiamondMineReward,
+    ),
+  );
 }

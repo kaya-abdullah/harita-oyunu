@@ -1,19 +1,19 @@
-/// Shared, child-friendly feedback SnackBar used across the game HUD.
+/// Shared feedback SnackBar used across the game HUD.
 library;
 
 import 'package:flutter/material.dart';
 
 import 'package:harita/core/theme/app_theme.dart';
 
-/// Shows a short floating SnackBar with an optional [emoji] and [message].
+/// Shows a short floating SnackBar with an optional [icon] and [message].
 ///
 /// Any previous SnackBar is cleared first so rapid taps never queue up a
 /// long backlog of messages. Silently does nothing when no [ScaffoldMessenger]
 /// is available.
-void showKidSnack(
+void showGameSnack(
   BuildContext context,
   String message, {
-  String emoji = '',
+  IconData? icon,
   Color? color,
 }) {
   final messenger = ScaffoldMessenger.maybeOf(context);
@@ -24,8 +24,10 @@ void showKidSnack(
       backgroundColor: color,
       content: Row(
         children: [
-          if (emoji.isNotEmpty)
-            Text('$emoji  ', style: const TextStyle(fontSize: 20)),
+          if (icon != null) ...[
+            Icon(icon, color: AppTheme.kTextLight, size: 22),
+            const SizedBox(width: 10),
+          ],
           Expanded(
             child: Text(
               message,

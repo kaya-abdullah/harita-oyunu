@@ -22,9 +22,11 @@ part 'save_data.g.dart';
 
 /// Current serialisation schema version.  Bump when breaking changes are made.
 ///
-/// Version 2: Africa tile map + bot difficulty. Older saves (60-territory
-/// map) are rejected and discarded by the repository.
-const int kSaveDataSchemaVersion = 2;
+/// Version 2: Africa tile map + bot difficulty.
+/// Version 3: fine real-outline map, diamond mines and up to 6 bots (all
+/// armies in one list). Older saves are rejected and discarded by the
+/// repository.
+const int kSaveDataSchemaVersion = 3;
 
 // ─── SaveData ─────────────────────────────────────────────────────────────────
 
@@ -37,8 +39,7 @@ const int kSaveDataSchemaVersion = 2;
 class SaveData extends HiveObject {
   SaveData({
     required this.territoriesJson,
-    required this.army1Json,
-    required this.army2Json,
+    required this.armiesJson,
     required this.currentTurn,
     required this.activeArmyId,
     required this.phase,
@@ -51,13 +52,10 @@ class SaveData extends HiveObject {
   @HiveField(0)
   final String territoriesJson;
 
-  /// JSON-encoded army 1.
+  /// JSON-encoded list of every army, in turn order. (Field 2 held army 2
+  /// before schema 3 and is no longer written.)
   @HiveField(1)
-  final String army1Json;
-
-  /// JSON-encoded army 2.
-  @HiveField(2)
-  final String army2Json;
+  final String armiesJson;
 
   /// Current turn number (1-indexed).
   @HiveField(3)
@@ -91,8 +89,7 @@ class SaveData extends HiveObject {
       territoriesJson: jsonEncode(
         state.territories.map(_territoryToJson).toList(),
       ),
-      army1Json: jsonEncode(_armyToJson(state.army1)),
-      army2Json: jsonEncode(_armyToJson(state.army2)),
+      armiesJson: jsonEncode(state.armies.map(_armyToJson).toList()),
       currentTurn: state.currentTurn,
       activeArmyId: state.activeArmyId.name,
       phase: state.phase.name,
@@ -115,13 +112,14 @@ class SaveData extends HiveObject {
         .cast<Map<String, dynamic>>();
     final territories = rawTerritories.map(_territoryFromJson).toList();
 
-    final army1 = _armyFromJson(jsonDecode(army1Json) as Map<String, dynamic>);
-    final army2 = _armyFromJson(jsonDecode(army2Json) as Map<String, dynamic>);
+    final armies = (jsonDecode(armiesJson) as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .map(_armyFromJson)
+        .toList();
 
     return GameState(
       territories: territories,
-      army1: army1,
-      army2: army2,
+      armies: armies,
       currentTurn: currentTurn,
       activeArmyId: _armyIdFromString(activeArmyId),
       phase: _gamePhaseFromString(phase),
@@ -141,6 +139,7 @@ Map<String, dynamic> _territoryToJson(Territory t) => {
   'unitCount': t.unitCount,
   'ownerArmyId': t.ownerArmyId?.name,
   'baseCapacity': t.baseCapacity,
+  'diamondMine': t.hasDiamondMine,
 };
 
 Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
@@ -153,6 +152,7 @@ Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
       ? _armyIdFromString(json['ownerArmyId'] as String)
       : null,
   baseCapacity: json['baseCapacity'] as int?,
+  hasDiamondMine: json['diamondMine'] as bool? ?? false,
 );
 
 // ─── Army serialisation ───────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
 Map<String, dynamic> _armyToJson(Army a) => {
   'id': a.id.name,
   'kind': a.kind.name,
-  'elmaBalance': a.elmaBalance,
+  'diamondBalance': a.diamondBalance,
   'totalUnitPool': a.totalUnitPool,
   'abilities': a.abilities.map(
     (type, state) => MapEntry(type.name, _abilityStateToJson(state)),
@@ -185,7 +185,7 @@ Army _armyFromJson(Map<String, dynamic> json) {
   return Army(
     id: _armyIdFromString(json['id'] as String),
     kind: _armyKindFromString(json['kind'] as String),
-    elmaBalance: json['elmaBalance'] as int,
+    diamondBalance: json['diamondBalance'] as int,
     totalUnitPool: json['totalUnitPool'] as int,
     abilities: abilitiesRaw,
     inventory: inventory,
@@ -198,16 +198,12 @@ Map<String, dynamic> _abilityStateToJson(AbilityState s) => {
   'type': s.type.name,
   'isUnlocked': s.isUnlocked,
   'cooldownTurnsRemaining': s.cooldownTurnsRemaining,
-  'chargeLevel': s.chargeLevel,
-  'maxCharge': s.maxCharge,
 };
 
 AbilityState _abilityStateFromJson(Map<String, dynamic> json) => AbilityState(
   type: _abilityTypeFromString(json['type'] as String),
   isUnlocked: json['isUnlocked'] as bool,
   cooldownTurnsRemaining: json['cooldownTurnsRemaining'] as int?,
-  chargeLevel: json['chargeLevel'] as int?,
-  maxCharge: json['maxCharge'] as int?,
 );
 
 // ─── WeaponItem serialisation ─────────────────────────────────────────────────
@@ -215,7 +211,7 @@ AbilityState _abilityStateFromJson(Map<String, dynamic> json) => AbilityState(
 Map<String, dynamic> _weaponItemToJson(WeaponItem w) => {
   'id': w.id,
   'nameKey': w.nameKey,
-  'elmaCost': w.elmaCost,
+  'diamondCost': w.diamondCost,
   'unlockTurn': w.unlockTurn,
   'requiredAbility': w.requiredAbility?.name,
 };
@@ -223,7 +219,7 @@ Map<String, dynamic> _weaponItemToJson(WeaponItem w) => {
 WeaponItem _weaponItemFromJson(Map<String, dynamic> json) => WeaponItem(
   id: json['id'] as String,
   nameKey: json['nameKey'] as String,
-  elmaCost: json['elmaCost'] as int,
+  diamondCost: json['diamondCost'] as int,
   unlockTurn: json['unlockTurn'] as int,
   requiredAbility: json['requiredAbility'] != null
       ? _abilityTypeFromString(json['requiredAbility'] as String)

@@ -36,13 +36,8 @@ class TurnIndicator extends ConsumerWidget {
         final currentTurn = gameState.currentTurn;
         final activeArmyId = gameState.activeArmyId;
 
-        final armyName = activeArmyId == ArmyId.army1
-            ? strings.army1Name
-            : strings.army2Name;
-
-        final armyDotColor = activeArmyId == ArmyId.army1
-            ? AppTheme.army1Primary
-            : AppTheme.army2Primary;
+        final armyName = strings.armyName(activeArmyId.index);
+        final armyDotColor = AppTheme.armyColor(activeArmyId);
 
         return Container(
           color: AppTheme.kBackground,
@@ -55,11 +50,7 @@ class TurnIndicator extends ConsumerWidget {
                 message:
                     '${strings.difficultyLabel}: '
                     '${difficultyName(gameState.difficulty, strings)}',
-                child: _TurnChip(
-                  label:
-                      '${strings.turnLabel} $currentTurn  '
-                      '${difficultyEmoji(gameState.difficulty)}',
-                ),
+                child: _TurnChip(label: '${strings.turnLabel} $currentTurn'),
               ),
 
               // ── Active army indicator ─────────────────────────────────
@@ -69,7 +60,7 @@ class TurnIndicator extends ConsumerWidget {
                   label: strings.activeArmyLabel,
                   armyName: armyName,
                   dotColor: armyDotColor,
-                  thinkingLabel: activeArmyId == ArmyId.army2
+                  thinkingLabel: activeArmyId != ArmyId.army1
                       ? strings.aiThinking
                       : null,
                 ),

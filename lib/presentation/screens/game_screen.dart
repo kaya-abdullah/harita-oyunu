@@ -28,7 +28,7 @@ import 'package:harita/presentation/screens/victory_screen.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/shop_viewmodel.dart';
-import 'package:harita/presentation/widgets/common/kid_snack.dart';
+import 'package:harita/presentation/widgets/common/game_snack.dart';
 import 'package:harita/presentation/widgets/hud/ability_panel.dart';
 import 'package:harita/presentation/widgets/hud/resource_bar.dart';
 import 'package:harita/presentation/widgets/hud/turn_indicator.dart';
@@ -128,63 +128,65 @@ class _GameScreenState extends ConsumerState<GameScreen> {
     if (t == null || !mounted) return;
     final v = fb.value;
     String msg;
-    var emoji = '';
+    IconData icon;
+    Color? color;
     switch (fb.kind) {
       case GameFeedbackKind.abilityLocked:
         msg = v != null && v > 0
             ? '${t.errorAbilityLocked} ${t.abilityLocked(turn: '$v')}'
             : t.errorAbilityLocked;
-        emoji = '🔒';
+        icon = Icons.lock_rounded;
       case GameFeedbackKind.abilityCooldown:
         msg = t.errorCooldownActive(turns: '${v ?? 0}');
-        emoji = '⏱';
-      case GameFeedbackKind.laserCharging:
-        msg =
-            '${t.errorAbilityNotReady} ${t.laserCharging(charge: '${v ?? 0}')}';
-        emoji = '⚡';
+        icon = Icons.timer_rounded;
       case GameFeedbackKind.invalidAbilityTarget:
         msg = t.errorInvalidTarget;
-        emoji = '🚫';
+        icon = Icons.block_rounded;
       case GameFeedbackKind.abilityArmed:
         final armed = ref.read(armedAbilityProvider);
         final name = armed == null ? '' : abilityDisplayName(armed, t);
         msg = t.abilitySelectTarget(ability: name);
-        emoji = '🎯';
+        icon = Icons.my_location_rounded;
       case GameFeedbackKind.abilityUsed:
         _audio.playSfx(AudioService.sfxAbility);
         final used = _lastArmed;
         msg = t.abilityUsed(
           ability: used == null ? '' : abilityDisplayName(used, t),
         );
-        emoji = '✨';
+        icon = used == null ? Icons.bolt_rounded : abilityIcon(used);
       case GameFeedbackKind.invalidAttack:
         msg = t.errorInvalidAttack;
-        emoji = '🚫';
+        icon = Icons.block_rounded;
       case GameFeedbackKind.territoryConquered:
         _audio.playSfx(AudioService.sfxAttack);
         msg = t.attackWon;
-        emoji = '🎉';
+        icon = Icons.flag_rounded;
+      case GameFeedbackKind.diamondMineCaptured:
+        _audio.playSfx(AudioService.sfxDiamond);
+        msg = t.diamondMineCaptured(count: '${v ?? 0}');
+        icon = Icons.diamond_rounded;
+        color = AppTheme.kDiamond;
       case GameFeedbackKind.attackRepelled:
         _audio.playSfx(AudioService.sfxAttack);
         msg = t.attackLost;
-        emoji = '💨';
+        icon = Icons.shield_rounded;
       case GameFeedbackKind.unitsMoved:
         msg = t.unitsMoved;
-        emoji = '🚶';
+        icon = Icons.directions_walk_rounded;
       case GameFeedbackKind.unitsDeployed:
         msg = t.unitsDeployed(count: '${v ?? 0}');
-        emoji = '🪖';
+        icon = Icons.groups_rounded;
       case GameFeedbackKind.cannotDeploy:
         msg = t.cannotDeploy;
-        emoji = '🚫';
+        icon = Icons.block_rounded;
       case GameFeedbackKind.notYourTurn:
         msg = t.errorNotYourTurn;
-        emoji = '⏳';
-      case GameFeedbackKind.insufficientElma:
-        msg = t.errorInsufficientElma;
-        emoji = '🍎';
+        icon = Icons.hourglass_top_rounded;
+      case GameFeedbackKind.insufficientDiamonds:
+        msg = t.errorInsufficientDiamonds;
+        icon = Icons.diamond_outlined;
     }
-    showKidSnack(context, msg, emoji: emoji);
+    showGameSnack(context, msg, icon: icon, color: color);
   }
 
   // ─── Build ───────────────────────────────────────────────────────────────

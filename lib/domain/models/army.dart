@@ -6,13 +6,29 @@ import 'package:harita/domain/models/weapon_item.dart';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
-/// Identifies which of the two armies this is.
+/// Identifies an army. [army1] is the human player; [army2] … [army7] are
+/// the bots (up to [kMaxBots]), in turn order.
 enum ArmyId {
-  /// The first army (human player by default; colour: blue).
+  /// The human player (blue).
   army1,
 
-  /// The second army (AI opponent by default; colour: red).
+  /// Bot 1 (red).
   army2,
+
+  /// Bot 2.
+  army3,
+
+  /// Bot 3.
+  army4,
+
+  /// Bot 4.
+  army5,
+
+  /// Bot 5.
+  army6,
+
+  /// Bot 6.
+  army7,
 }
 
 /// Specifies whether the army is controlled by a human or the AI.
@@ -33,25 +49,25 @@ class Army {
   const Army({
     required this.id,
     required this.kind,
-    required this.elmaBalance,
+    required this.diamondBalance,
     required this.totalUnitPool,
     required this.abilities,
     required this.inventory,
   });
 
-  /// Which army this is (army1 or army2).
+  /// Which army this is.
   final ArmyId id;
 
   /// Whether this army is human-controlled or AI-controlled.
   final ArmyKind kind;
 
-  /// Current Elma (apple currency) balance.
-  final int elmaBalance;
+  /// Current diamond (Elmas) balance.
+  final int diamondBalance;
 
   /// Undeployed soldier units available to place on territories.
   final int totalUnitPool;
 
-  /// Runtime state for each of the five special abilities.
+  /// Runtime state for each of the special abilities.
   ///
   /// The map is stored as an unmodifiable view to prevent accidental mutation.
   final Map<AbilityType, AbilityState> abilities;
@@ -64,7 +80,7 @@ class Army {
   Army copyWith({
     ArmyId? id,
     ArmyKind? kind,
-    int? elmaBalance,
+    int? diamondBalance,
     int? totalUnitPool,
     Map<AbilityType, AbilityState>? abilities,
     List<WeaponItem>? inventory,
@@ -72,7 +88,7 @@ class Army {
     return Army(
       id: id ?? this.id,
       kind: kind ?? this.kind,
-      elmaBalance: elmaBalance ?? this.elmaBalance,
+      diamondBalance: diamondBalance ?? this.diamondBalance,
       totalUnitPool: totalUnitPool ?? this.totalUnitPool,
       // Wrap in an unmodifiable map so callers cannot mutate through the copy.
       abilities: Map.unmodifiable(abilities ?? this.abilities),
@@ -88,7 +104,7 @@ class Army {
     if (other is! Army) return false;
     return id == other.id &&
         kind == other.kind &&
-        elmaBalance == other.elmaBalance &&
+        diamondBalance == other.diamondBalance &&
         totalUnitPool == other.totalUnitPool &&
         _mapEquals(abilities, other.abilities) &&
         _listEquals(inventory, other.inventory);
@@ -98,7 +114,7 @@ class Army {
   int get hashCode => Object.hash(
     id,
     kind,
-    elmaBalance,
+    diamondBalance,
     totalUnitPool,
     Object.hashAll(abilities.entries.map((e) => Object.hash(e.key, e.value))),
     Object.hashAll(inventory),
@@ -106,7 +122,7 @@ class Army {
 
   @override
   String toString() =>
-      'Army(id: $id, kind: $kind, elma: $elmaBalance, '
+      'Army(id: $id, kind: $kind, diamonds: $diamondBalance, '
       'unitPool: $totalUnitPool, inventorySize: ${inventory.length})';
 }
 

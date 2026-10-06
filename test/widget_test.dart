@@ -5,12 +5,14 @@ import 'package:harita/core/constants.dart';
 
 void main() {
   test('Core constants are defined correctly', () {
-    expect(kTerritoryCount, 227);
+    expect(kTerritoryCount, 1163);
     expect(kBigBaseCapacity, 150);
     expect(kTurnUnlockBombardment, 10);
     expect(kTurnUnlockSoldierSpell, 12);
     expect(kTurnUnlockMegaBomba, 45);
-    expect(kElmaPerBase, 10);
+    expect(kDiamondsPerTurn, 80);
+    expect(kDiamondMineReward, 250);
+    expect(kMaxBots, 6);
     expect(kSoldiersPerTurn, 3);
     expect(kPhoneBreakpoint, 600.0);
   });

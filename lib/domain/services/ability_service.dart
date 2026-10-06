@@ -125,7 +125,8 @@ abstract class AbilityService {
   ///
   /// Offensive abilities capture tiles ("minik kare"): Fire Bomb 2,
   /// Bombardment 8, Mega Bomba 25 (see [captureArea]); captured diamond
-  /// mines pay [kDiamondMineReward]. Soldier Spell adds [kSoldierSpellUnits]
+  /// mines pay [kDiamondMineReward], gold mines (bases) [kGoldMineReward].
+  /// Soldier Spell adds [kSoldierSpellUnits]
   /// units to a friendly tile.
   ///
   /// Returns a new [GameState] with the ability effect applied; the original
@@ -273,7 +274,7 @@ class AbilityServiceImpl implements AbilityService {
     final next = state
         .withArmy(updatedArmy)
         .copyWith(territories: updatedTerritories);
-    return awardDiamondMines(state, next, armyId);
+    return awardMineRewards(state, next, armyId);
   }
 
   // ─── tickCooldowns ───────────────────────────────────────────────────────

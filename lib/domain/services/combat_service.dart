@@ -174,8 +174,8 @@ class CombatServiceImpl implements CombatService {
       );
     }
 
-    // Conquering a diamond mine pays out (Elmas madeni).
-    return awardDiamondMines(
+    // Conquering a diamond or gold mine pays out.
+    return awardMineRewards(
       state,
       _replace(state, updatedSource, updatedTarget),
       attackingArmyId,

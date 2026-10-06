@@ -171,6 +171,10 @@ enum GameFeedbackKind {
   /// earned.
   diamondMineCaptured,
 
+  /// A gold mine (base) was captured; [GameFeedback.value] holds the
+  /// diamonds earned.
+  goldMineCaptured,
+
   /// Attack failed; defender held.
   attackRepelled,
 
@@ -355,7 +359,7 @@ class GameNotifier extends Notifier<GameState> {
     }
     final targetBefore = _territory(targetId);
     final wasOwn = targetBefore?.ownerArmyId == state.activeArmyId;
-    final diamondsBefore = state.activeArmy.diamondBalance;
+    final before = state;
     try {
       final next = _combat.resolveAttack(
         state: state,
@@ -369,10 +373,7 @@ class GameNotifier extends Notifier<GameState> {
       if (wasOwn) {
         _feedback(GameFeedbackKind.unitsMoved);
       } else if (targetAfter?.ownerArmyId == attacker) {
-        final earned = state.army(attacker).diamondBalance - diamondsBefore;
-        if (earned > 0) {
-          _feedback(GameFeedbackKind.diamondMineCaptured, earned);
-        } else {
+        if (!_mineFeedback(before, attacker)) {
           _feedback(GameFeedbackKind.territoryConquered);
         }
       } else {
@@ -447,7 +448,7 @@ class GameNotifier extends Notifier<GameState> {
       _feedback(GameFeedbackKind.notYourTurn);
       return;
     }
-    final diamondsBefore = state.activeArmy.diamondBalance;
+    final before = state;
     try {
       final next = _ability.activateAbility(
         state: state,
@@ -458,11 +459,7 @@ class GameNotifier extends Notifier<GameState> {
       ref.read(armedAbilityProvider.notifier).set(null);
       _commit(next);
       _feedback(GameFeedbackKind.abilityUsed);
-      final earned =
-          state.army(next.activeArmyId).diamondBalance - diamondsBefore;
-      if (earned > 0) {
-        _feedback(GameFeedbackKind.diamondMineCaptured, earned);
-      }
+      _mineFeedback(before, before.activeArmyId);
     } on LockedAbilityException catch (e) {
       ref.read(armedAbilityProvider.notifier).set(null);
       _feedback(GameFeedbackKind.abilityLocked, e.unlockTurn);
@@ -475,6 +472,22 @@ class GameNotifier extends Notifier<GameState> {
     } on StateError {
       _feedback(GameFeedbackKind.invalidAbilityTarget);
     }
+  }
+
+  /// Emits a diamond / gold mine message if [army] captured mines since
+  /// [before]. Returns `true` when it did.
+  bool _mineFeedback(GameState before, ArmyId army) {
+    final (diamond, gold) = capturedMines(before, state, army);
+    if (diamond == 0 && gold == 0) return false;
+    final earned =
+        state.army(army).diamondBalance - before.army(army).diamondBalance;
+    _feedback(
+      diamond > 0
+          ? GameFeedbackKind.diamondMineCaptured
+          : GameFeedbackKind.goldMineCaptured,
+      earned,
+    );
+    return true;
   }
 
   // ─── deployReinforcements ────────────────────────────────────────────────

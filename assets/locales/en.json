@@ -48,7 +48,7 @@
   "tutorial_finish": "Start",
   "tutorial_step_map": "This map is Africa. The continent is made of hundreds of small squares. You are the blue squares in the north-west; the bots start at the other ends of Africa. Pinch to zoom and drag to move.",
   "tutorial_step_territory": "Select one of your squares, then tap a square next to it to attack or move soldiers. Tap your selected square again to deploy reserve soldiers.",
-  "tutorial_step_resources": "At the end of each turn you earn 80 diamonds and an extra soldier for every 12 squares you own. Capture a diamond mine for 250 more diamonds.",
+  "tutorial_step_resources": "At the end of each turn you earn 80 diamonds and an extra soldier for every 12 squares you own. Capture a diamond mine for 250 more diamonds, or a gold mine (the gold bars) for 150.",
   "tutorial_step_abilities": "Cards capture squares: Fire Bomb 2, Bombardment 8, Super Blast 25. The Soldier Spell brings soldiers.",
   "tutorial_step_shop": "Spend diamonds at the Weapon Shop to buy extra cards.",
   "tutorial_step_end_turn": "When you are ready, press End Turn; the bots play next.",
@@ -143,5 +143,7 @@
   "region_burundi": "Burundi",
   "region_malawi": "Malawi",
   "region_lesotho": "Lesotho",
-  "region_eswatini": "Eswatini"
+  "region_eswatini": "Eswatini",
+  "gold_mine_captured": "Gold mine captured: +{count} diamonds",
+  "gold_mine_label": "Gold mine"
 }

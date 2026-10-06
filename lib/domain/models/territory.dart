@@ -60,6 +60,10 @@ class Territory {
   /// [kDiamondMineReward] diamonds.
   final bool hasDiamondMine;
 
+  /// Whether this tile is a gold mine: every base is one. Capturing it pays
+  /// [kGoldMineReward] diamonds.
+  bool get hasGoldMine => type != TerritoryType.normal;
+
   // ─── copyWith ─────────────────────────────────────────────────────────────
 
   Territory copyWith({

@@ -30,6 +30,9 @@ class AudioService {
   /// Sparkle played when a diamond mine is captured.
   static const sfxDiamond = 'diamond.mp3';
 
+  /// Coins clinking when a gold mine (base) is captured.
+  static const sfxGold = 'gold.mp3';
+
   /// Atomic-bomb blast of the intro screen.
   static const sfxNuke = 'nuke.mp3';
 

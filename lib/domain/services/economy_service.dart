@@ -221,26 +221,36 @@ class EconomyServiceImpl implements EconomyService {
   }
 }
 
-// ─── Diamond mines ───────────────────────────────────────────────────────────
+// ─── Diamond and gold mines ──────────────────────────────────────────────────
 
-/// Pays [armyId] [kDiamondMineReward] diamonds for every diamond-mine tile it
-/// owns in [after] but did not own in [before] (i.e. mines it just captured).
-GameState awardDiamondMines(GameState before, GameState after, ArmyId armyId) {
-  var captured = 0;
+/// Counts the mines [armyId] owns in [after] but did not own in [before]
+/// (i.e. mines it just captured): `(diamond mines, gold mines)`.
+(int, int) capturedMines(GameState before, GameState after, ArmyId armyId) {
+  var diamond = 0;
+  var gold = 0;
   for (var i = 0; i < after.territories.length; i++) {
     final t = after.territories[i];
-    if (!t.hasDiamondMine || t.ownerArmyId != armyId) continue;
+    if (t.ownerArmyId != armyId) continue;
+    if (!t.hasDiamondMine && !t.hasGoldMine) continue;
     final was =
         i < before.territories.length && before.territories[i].id == t.id
         ? before.territories[i]
         : before.territories.firstWhere((b) => b.id == t.id);
-    if (was.ownerArmyId != armyId) captured++;
+    if (was.ownerArmyId == armyId) continue;
+    if (t.hasDiamondMine) diamond++;
+    if (t.hasGoldMine) gold++;
   }
-  if (captured == 0) return after;
+  return (diamond, gold);
+}
+
+/// Pays [armyId] [kDiamondMineReward] diamonds for every diamond mine and
+/// [kGoldMineReward] for every gold mine (base) it just captured.
+GameState awardMineRewards(GameState before, GameState after, ArmyId armyId) {
+  final (diamond, gold) = capturedMines(before, after, armyId);
+  final reward = diamond * kDiamondMineReward + gold * kGoldMineReward;
+  if (reward == 0) return after;
   final army = after.army(armyId);
   return after.withArmy(
-    army.copyWith(
-      diamondBalance: army.diamondBalance + captured * kDiamondMineReward,
-    ),
+    army.copyWith(diamondBalance: army.diamondBalance + reward),
   );
 }

@@ -5,7 +5,9 @@ The attack sound (assets/audio/attack.mp3) and the background music are kept
 as they are; this script writes:
 
   ability.mp3   — card used: rising whoosh into a heavy explosion
-  nuke.mp3      — intro: falling whistle, then a huge atomic blast + rumble
+  nuke.mp3      — intro: 1 s falling whistle, then a huge atomic blast, a
+                  rolling sub-bass rumble, crackling debris and a long echo
+  gold.mp3      — gold mine captured: a handful of clinking coins
   diamond.mp3   — diamond mine captured: bright crystal sparkle
   turn_end.mp3  — end of turn: two low war-drum hits + a short horn
   tap.mp3       — UI tap: short soft wooden click
@@ -70,6 +72,17 @@ def normalise(x, peak=0.89, rms_db=-15.0):
     return x * gain
 
 
+def reverb(x, seconds=1.5, mix=0.3, tone=3000):
+    """Adds a simple room/valley echo: convolution with decaying noise."""
+    t = t_axis(seconds)
+    ir = lowpass(rng.standard_normal(len(t)), tone) * np.exp(-t / (seconds / 5))
+    ir /= np.sqrt(np.sum(ir ** 2)) + 1e-9
+    n = len(x) + len(ir)
+    wet = np.fft.irfft(np.fft.rfft(x, n) * np.fft.rfft(ir, n), n)
+    dry = np.concatenate([x, np.zeros(len(ir))])
+    return dry * (1 - mix) + wet * mix * 3
+
+
 def soft_clip(x, drive=1.5):
     return np.tanh(x * drive) / np.tanh(drive)
 
@@ -110,29 +123,53 @@ def place(track, clip, at):
     track[i:end] += clip[: end - i]
 
 
+def gold():
+    x = np.zeros(int(SR * 0.9))
+    for i in range(6):
+        t = t_axis(0.35)
+        f = 2400 + rng.uniform(-300, 600)
+        ping = sum(
+            np.sin(2 * np.pi * f * k * t) / (1 + j)
+            for j, k in enumerate([1.0, 2.41, 3.87, 5.3])
+        )
+        place(x, ping * env(t, 0.001, 0.06 + 0.02 * rng.random()), 0.05 + i * 0.075 + 0.02 * rng.random())
+    return reverb(x, 0.6, 0.2, 6000)
+
+
 def ability():
     t = t_axis(1.3)
     whoosh = lowpass(rng.standard_normal(len(t)), 300 + 3000 * np.minimum(t / 0.25, 1))
     whoosh *= np.where(t < 0.25, t / 0.25, np.exp(-(t - 0.25) / 0.05)) * 0.5
     x = whoosh
     place(x, explosion(1.05, 0.8), 0.22)
-    return soft_clip(x, 1.8)
+    return soft_clip(reverb(x, 1.0, 0.25, 2500), 1.8)
 
 
 def nuke():
-    total = 4.2
+    total = 5.5
     x = np.zeros(int(SR * total))
-    # Falling whistle (pitch drops while it gets louder).
+    # Falling whistle (pitch drops while it gets louder), with air noise.
     t = t_axis(1.0)
-    f = 1500 - 900 * t
-    whistle = np.sin(2 * np.pi * np.cumsum(f) / SR) * (0.15 + 0.35 * t)
-    place(x, whistle, 0.0)
-    boom = explosion(3.2, 2.2)
-    # A second, deeper shock wave.
-    t2 = t_axis(3.2)
-    shock = np.sin(2 * np.pi * (38 * np.exp(-t2 / 0.6) + 22) * t2) * env(t2, 0.01, 0.9)
-    place(x, boom + shock * 1.2, 1.0)
-    return soft_clip(x, 2.2)
+    f = 1700 - 1000 * t
+    whistle = np.sin(2 * np.pi * np.cumsum(f) / SR) * (0.02 + 0.07 * t)
+    air = lowpass(rng.standard_normal(len(t)), 2500) * 0.02 * t
+    place(x, whistle + air, 0.0)
+    # The blast at exactly 1.0 s.
+    boom = explosion(4.4, 2.6)
+    t2 = t_axis(4.4)
+    shock = np.sin(2 * np.pi * (34 * np.exp(-t2 / 0.7) + 20) * t2) * env(t2, 0.01, 1.3)
+    # Rolling thunder: slow swells of deep noise.
+    swell = 1 + 0.6 * np.sin(2 * np.pi * 1.3 * t2) * np.sin(2 * np.pi * 0.4 * t2)
+    rumble = lowpass(rng.standard_normal(len(t2)), 60) * env(t2, 0.3, 1.6) * swell * 5
+    # Crackling debris.
+    crackle = highpass(rng.standard_normal(len(t2)), 2500)
+    crackle *= (rng.random(len(t2)) < 0.004) * 6 * env(t2, 0.05, 0.9)
+    place(x, boom + shock * 1.3 + rumble + crackle * 0.4, 1.0)
+    x = soft_clip(reverb(x, 2.5, 0.35, 900)[: len(x)], 1.6)
+    # Let the rumble die away over the last 1.5 s.
+    tail = int(1.5 * SR)
+    x[-tail:] *= np.linspace(1, 0, tail) ** 2
+    return x
 
 
 def diamond():
@@ -152,7 +189,7 @@ def turn_end():
     place(x, drum(0.5, 75), 0.0)
     place(x, drum(0.5, 62), 0.16)
     place(x, brass(196.0, 0.55) * 0.6, 0.32)
-    return x
+    return reverb(x, 0.8, 0.2)
 
 
 def tap():
@@ -171,13 +208,14 @@ def victory():
         place(x, brass(f / 2, d + 0.1) * 0.5, at)
     for at in (0.0, 0.72, 1.85, 2.12):
         place(x, drum(0.7, 55) * 1.2, at)
-    return soft_clip(x * 0.8, 1.3)
+    return soft_clip(reverb(x * 0.8, 1.6, 0.3), 1.3)
 
 
 if __name__ == "__main__":
     write("ability.mp3", ability())
     write("nuke.mp3", nuke(), rms_db=-11.0)  # the big intro blast
     write("diamond.mp3", diamond())
+    write("gold.mp3", gold())
     write("turn_end.mp3", turn_end())
     write("tap.mp3", tap())
     write("victory.mp3", victory())

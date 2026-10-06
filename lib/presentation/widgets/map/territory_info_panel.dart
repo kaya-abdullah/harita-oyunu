@@ -121,7 +121,10 @@ class TerritoryInfoPanel extends ConsumerWidget {
               : null,
           mineText: territory.hasDiamondMine
               ? (strings.diamondMineLabel, '+$kDiamondMineReward')
+              : territory.hasGoldMine
+              ? (strings.goldMineLabel, '+$kGoldMineReward')
               : null,
+          mineIsGold: !territory.hasDiamondMine && territory.hasGoldMine,
           onDeploy: () => ref
               .read(gameProvider.notifier)
               .deployReinforcements(territory.id),
@@ -175,6 +178,7 @@ class _InfoCard extends StatelessWidget {
     required this.onDeploy,
     required this.reserveText,
     required this.mineText,
+    required this.mineIsGold,
   });
 
   final String territoryName;
@@ -195,8 +199,11 @@ class _InfoCard extends StatelessWidget {
   /// (label, value) of the reserve-soldier row, or `null` to hide it.
   final (String, String)? reserveText;
 
-  /// (label, value) of the diamond-mine row, or `null` to hide it.
+  /// (label, value) of the diamond- or gold-mine row, or `null` to hide it.
   final (String, String)? mineText;
+
+  /// Whether [mineText] describes a gold mine (else a diamond mine).
+  final bool mineIsGold;
 
   @override
   Widget build(BuildContext context) {
@@ -265,8 +272,10 @@ class _InfoCard extends StatelessWidget {
                 if (mineText != null) ...[
                   const SizedBox(height: 10),
                   _InfoRow(
-                    icon: Icons.diamond_rounded,
-                    iconColor: AppTheme.kDiamond,
+                    icon: mineIsGold
+                        ? Icons.paid_rounded
+                        : Icons.diamond_rounded,
+                    iconColor: mineIsGold ? AppTheme.kGold : AppTheme.kDiamond,
                     label: mineText!.$1,
                     value: mineText!.$2,
                   ),

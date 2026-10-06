@@ -26,8 +26,9 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 /// keeps the frame cheap on phones. Layers, bottom to top:
 ///   - a light shore band and the countries in earthy colours;
 ///   - owned tiles in their army colour, clipped to the coastline;
-///   - a faint tile grid, then country borders and the coast;
-///   - gold base markers, cyan diamond-mine markers;
+///   - country borders and the coast, then a faint tile grid;
+///   - "walls": a dark line in each army's colour along its frontier;
+///   - gold bars on the bases (gold mines), cyan diamond-mine markers;
 ///   - unit counts (only once zoomed in far enough to read them);
 ///   - selection / neighbour / ability-target frames;
 ///   - a dashed sea link to Madagascar.
@@ -66,6 +67,16 @@ class MapComponent extends PositionComponent
   static final List<Paint> _armyPaints = [
     for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(230),
   ];
+  static final List<Paint> _wallPaints = [
+    for (final c in AppTheme.armyPrimaries)
+      Paint()
+        ..color = Color.lerp(c, const Color(0xFF000000), 0.5)!
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.6
+        ..strokeCap = StrokeCap.square,
+  ];
+  static final Paint _goldDark = Paint()..color = const Color(0xFF8D6E00);
+  static final Paint _goldShine = Paint()..color = const Color(0xFFFFF59D);
   static final Paint _shorePaint = Paint()
     ..color = const Color(0xFFB3E5FC)
     ..style = PaintingStyle.stroke
@@ -75,10 +86,15 @@ class MapComponent extends PositionComponent
     ..color = const Color(0x1F000000)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 0.6;
-  static final Paint _borderPaint = Paint()
-    ..color = const Color(0xCC4E342E)
+  static final Paint _borderHalo = Paint()
+    ..color = const Color(0x99FFFFFF)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.3
+    ..strokeWidth = 3
+    ..strokeJoin = StrokeJoin.round;
+  static final Paint _borderPaint = Paint()
+    ..color = const Color(0xB34E342E)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.1
     ..strokeJoin = StrokeJoin.round;
   static final Paint _seaLinkPaint = Paint()
     ..color = const Color(0xCCFFFFFF)
@@ -205,6 +221,10 @@ class MapComponent extends PositionComponent
       canvas.drawPath(path, _countryPaints[key]!);
     });
 
+    // Country borders lie under the armies, whose walls mark their land.
+    _countries.forEach((_, path) => canvas.drawPath(path, _borderHalo));
+    _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
+
     canvas
       ..save()
       ..clipPath(_land);
@@ -213,11 +233,9 @@ class MapComponent extends PositionComponent
       if (owner == null) continue;
       canvas.drawRect(_tileRect(t.id), _armyPaints[owner.index]);
     }
-    canvas
-      ..drawPath(_grid, _gridPaint)
-      ..restore();
-
-    _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
+    canvas.drawPath(_grid, _gridPaint);
+    _drawWalls(canvas, territories);
+    canvas.restore();
     for (final (a, b) in _seaLinks) {
       _drawDashed(canvas, a, b);
     }
@@ -234,12 +252,8 @@ class MapComponent extends PositionComponent
       final rect = _tileRect(t.id);
       if (visible != null && !visible.overlaps(rect)) continue;
 
-      if (t.type != TerritoryType.normal) {
-        final r = t.type == TerritoryType.bigBase ? 5.0 : 3.8;
-        final c = Offset(rect.left + r + 1.5, rect.top + r + 1.5);
-        canvas
-          ..drawCircle(c, r, _baseFill)
-          ..drawCircle(c, r, _markerStroke);
+      if (t.hasGoldMine) {
+        _drawGold(canvas, rect, big: t.type == TerritoryType.bigBase);
       }
       if (t.hasDiamondMine) _drawMine(canvas, rect);
 
@@ -265,6 +279,80 @@ class MapComponent extends PositionComponent
 
     if (selected != null) {
       canvas.drawRect(_tileRect(selected.id).deflate(1), _selectedPaint);
+    }
+  }
+
+  /// Frontier "walls": along every tile edge between different owners, a
+  /// dark line in the colour of each army that owns a side, drawn just
+  /// inside its own tile so neighbouring armies' walls sit side by side.
+  void _drawWalls(Canvas canvas, List<Territory> territories) {
+    final s = graph.tileSize;
+    const inset = 1.3;
+    final paths = <int, Path>{};
+    void wall(ArmyId? owner, Offset a, Offset b) {
+      if (owner == null) return;
+      final path = paths.putIfAbsent(owner.index, Path.new);
+      path
+        ..moveTo(a.dx, a.dy)
+        ..lineTo(b.dx, b.dy);
+    }
+
+    for (final t in territories) {
+      final p = graph.positionOf(t.id);
+      final x = p.col * s;
+      final y = p.row * s;
+      final right = _cellToId[_cellKey(p.col + 1, p.row)];
+      final below = _cellToId[_cellKey(p.col, p.row + 1)];
+      final left = _cellToId[_cellKey(p.col - 1, p.row)];
+      final above = _cellToId[_cellKey(p.col, p.row - 1)];
+      final o = t.ownerArmyId;
+      if (o == null) continue;
+      if (right == null || territories[right].ownerArmyId != o) {
+        wall(o, Offset(x + s - inset, y), Offset(x + s - inset, y + s));
+      }
+      if (below == null || territories[below].ownerArmyId != o) {
+        wall(o, Offset(x, y + s - inset), Offset(x + s, y + s - inset));
+      }
+      if (left == null || territories[left].ownerArmyId != o) {
+        wall(o, Offset(x + inset, y), Offset(x + inset, y + s));
+      }
+      if (above == null || territories[above].ownerArmyId != o) {
+        wall(o, Offset(x, y + inset), Offset(x + s, y + inset));
+      }
+    }
+    paths.forEach((i, path) => canvas.drawPath(path, _wallPaints[i]));
+  }
+
+  /// Gold bars (a gold mine) in the top-left corner of [rect]; two bars on
+  /// a big base.
+  void _drawGold(Canvas canvas, Rect rect, {required bool big}) {
+    final w = rect.width * (big ? 0.5 : 0.56);
+    final h = w * 0.42;
+    void bar(Offset topLeft) {
+      final r = Rect.fromLTWH(topLeft.dx, topLeft.dy, w, h);
+      final shape = Path()
+        ..moveTo(r.left + w * 0.18, r.top)
+        ..lineTo(r.right - w * 0.18, r.top)
+        ..lineTo(r.right, r.bottom)
+        ..lineTo(r.left, r.bottom)
+        ..close();
+      canvas
+        ..drawPath(shape, _goldDark)
+        ..drawPath(shape.shift(const Offset(0, -0.8)), _baseFill)
+        ..drawRect(
+          Rect.fromLTWH(r.left + w * 0.25, r.top + h * 0.15, w * 0.3, h * 0.2),
+          _goldShine,
+        )
+        ..drawPath(shape, _markerStroke);
+    }
+
+    final origin = Offset(rect.left + 1.5, rect.top + 2.5);
+    if (big) {
+      bar(origin.translate(0, h * 0.9));
+      bar(origin.translate(w * 0.5, h * 0.9));
+      bar(origin.translate(w * 0.25, 0));
+    } else {
+      bar(origin);
     }
   }
 

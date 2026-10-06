@@ -144,10 +144,14 @@ void main() {
     final s = c.read(gameProvider);
     expect(s.activeArmyId, ArmyId.army1);
     expect(s.currentTurn, 2);
-    // 80 diamonds every turn (plus 250 for any mine captured).
+    // 80 diamonds every turn (plus 250 / 150 for any mine captured).
     expect(
       s.army1.diamondBalance - diamondsBefore,
-      anyOf(kDiamondsPerTurn, kDiamondsPerTurn + kDiamondMineReward),
+      anyOf(
+        kDiamondsPerTurn,
+        kDiamondsPerTurn + kDiamondMineReward,
+        kDiamondsPerTurn + kGoldMineReward,
+      ),
     );
     final owned = s.territories
         .where((t) => t.ownerArmyId == ArmyId.army1)
@@ -327,6 +331,46 @@ void main() {
       c.read(gameProvider).army1.diamondBalance,
       after.army1.diamondBalance,
     );
+  });
+
+  test('capturing a base (gold mine) pays 150 diamonds', () {
+    final c = _container(_MemorySaveRepository());
+    final n = c.read(gameProvider.notifier);
+    final s = createInitialGameState();
+    final base = s.territories.firstWhere(
+      (t) => t.hasGoldMine && t.ownerArmyId == null,
+    );
+    final source = base.adjacentIds.first;
+    final territories = [
+      for (final t in s.territories)
+        t.id == source
+            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 10)
+            : t.id == base.id
+            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            : t,
+    ];
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    n.state = s.copyWith(territories: territories);
+    final before = c.read(gameProvider).army1.diamondBalance;
+    n.declareAttack(source, base.id);
+    final after = c.read(gameProvider);
+    expect(after.territories[base.id].ownerArmyId, ArmyId.army1);
+    expect(after.army1.diamondBalance, before + kGoldMineReward);
+    expect(
+      c.read(gameFeedbackProvider)!.kind,
+      GameFeedbackKind.goldMineCaptured,
+    );
+    expect(c.read(gameFeedbackProvider)!.value, kGoldMineReward);
+  });
+
+  test('every base is a gold mine; mines are never on bases', () {
+    final s = createInitialGameState();
+    for (final t in s.territories) {
+      expect(t.hasGoldMine, t.type != TerritoryType.normal);
+      expect(t.hasGoldMine && t.hasDiamondMine, isFalse);
+    }
+    expect(kGoldMineReward, 150);
+    expect(kGoldMineReward, lessThan(kDiamondMineReward));
   });
 
   test('every army earns 80 diamonds at the end of its turn', () {

@@ -99,6 +99,9 @@ abstract class AppTheme {
   /// Diamond (Elmas) colour used for the currency icon.
   static const Color kDiamond = Color(0xFF00ACC1);
 
+  /// Gold colour used for gold mines (bases).
+  static const Color kGold = Color(0xFFB8860B);
+
   // ────────────────────────────────────────
   // Accent / semantic colours
   // ────────────────────────────────────────

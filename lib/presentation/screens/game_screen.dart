@@ -166,6 +166,11 @@ class _GameScreenState extends ConsumerState<GameScreen> {
         msg = t.diamondMineCaptured(count: '${v ?? 0}');
         icon = Icons.diamond_rounded;
         color = AppTheme.kDiamond;
+      case GameFeedbackKind.goldMineCaptured:
+        _audio.playSfx(AudioService.sfxGold);
+        msg = t.goldMineCaptured(count: '${v ?? 0}');
+        icon = Icons.paid_rounded;
+        color = AppTheme.kGold;
       case GameFeedbackKind.attackRepelled:
         _audio.playSfx(AudioService.sfxAttack);
         msg = t.attackLost;

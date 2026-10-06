@@ -461,6 +461,28 @@ void main() {
       expect(r.army2.diamondBalance, state.army2.diamondBalance);
     });
 
+    test('a captured base (gold mine) pays 150 diamonds', () {
+      final state = makeLine([a1, a2, a2, a2]);
+      final withBase = state.copyWith(
+        territories: [
+          for (final t in state.territories)
+            t.id == 2
+                ? t.copyWith(type: TerritoryType.smallBase, baseCapacity: 75)
+                : t,
+        ],
+      );
+      final r = service.activateAbility(
+        state: withBase,
+        armyId: a1,
+        ability: AbilityType.fireBomb,
+        targetTerritoryId: 1,
+      );
+      expect(
+        r.army1.diamondBalance,
+        state.army1.diamondBalance + kGoldMineReward,
+      );
+    });
+
     test('a mine outside the captured area pays nothing', () {
       final state = makeLine([a1, a2, a2, a2], mines: {3});
       final r = service.activateAbility(

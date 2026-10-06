@@ -82,3 +82,34 @@ Kaynak: `WhatsApp Audio 2026-10-06 at 20.29.27.mp4` (sesli istek, Whisper ile ya
 
 ## Derleme
 `cd android && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew assembleRelease --no-daemon`
+
+---
+
+# 2. tur — Gerçekçi Atom Bombası, Altın Madenleri, Duvarlar, Sesler
+
+Kaynak: `WhatsApp Audio 2026-10-06 at 22.26.50.mp4`.
+
+## İstekler ve yorumları
+1. "Atom bombasının görünüşü garip, oyuncak gibi, emojilerden yapmışsın; gerçekçi yap."
+   → Girişte artık gerçek bir atom testi fotoğrafı var: Operation Upshot-Knothole "Badger"
+   (1953, ABD Enerji Bakanlığı, kamu malı; kaynak `assets/images/CREDITS.txt`). Akış:
+   bomba düşüyor (gölgeli, metal görünümlü "Fat Man" biçimi), kör eden beyaz parlama,
+   ardından fotoğraf beliriyor ve ateş topu büyüyormuş gibi uzaklaşıyor; yer sarsılıyor,
+   koyu duman ekranı kaplıyor ve dağılınca menü görünüyor.
+2. "Sesleri biraz daha iyi yapmaya çalış." → Bomba sesi baştan yapıldı: kısık ıslık, tam
+   patlama anında derin gümbürtü, uzun yuvarlanan uğultu, çatırtılar ve vadi yankısı.
+   Patlama sesi artık görüntüdeki parlamayla aynı anda geliyor (önceden yaklaşık 0,8 s geç
+   kalıyordu). Kart, tur sonu ve zafer seslerine yankı eklendi. Saldırı sesi yine aynı.
+3. "Duvarların görünüşünü iyi yap." → Duvar, toprak sınırları olarak yorumlandı. Her ordunun
+   bölgesi kendi renginin koyu tonunda kalın bir sınır çizgisiyle çevrildi. Ülke sınırları
+   beyaz hareli ince çizgi oldu ve ordu karelerinin altında kalıyor.
+4. "Elmastan başka altın da ekle, o sarılıkları altın yap; altınlar 150 kazandırsın."
+   → Haritadaki sarı noktalar (üsler) artık **altın madeni** ve altın külçesi olarak
+   çiziliyor (büyük üslerde üç külçe). Ele geçirilen her altın madeni +150 Elmas veriyor
+   (elmas madeni +250). Altın madeni alınınca para sesi ve altın renkli bir mesaj çıkıyor.
+
+## Test
+- `flutter test`: 122 test geçiyor. Yeni testler: altın madeni ödülü (saldırıyla ve kartla),
+  her üsün altın madeni olması ve madenlerle çakışmaması, girişte fotoğrafın ancak patlamadan
+  sonra görünmesi.
+- Giriş animasyonu ve harita kare kare görüntülenip kontrol edildi.

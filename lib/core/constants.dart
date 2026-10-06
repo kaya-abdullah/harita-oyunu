@@ -45,6 +45,10 @@ const int kDiamondsPerTurn = 80;
 /// Diamonds earned for capturing a tile with a diamond mine.
 const int kDiamondMineReward = 250;
 
+/// Diamonds earned for capturing a base: every base (the yellow markers) is
+/// a gold mine ("altın madeni"), worth less than a diamond mine.
+const int kGoldMineReward = 150;
+
 /// Diamonds every army starts the game with.
 const int kStartDiamonds = 50;
 

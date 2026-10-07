@@ -5,8 +5,7 @@ import 'package:harita/domain/models/special_ability.dart';
 
 // ─── WeaponItem ──────────────────────────────────────────────────────────────
 
-/// An item for sale in the Weapon Shop: one card, a tank or a bomber.
-/// Everything is on sale from the first turn.
+/// An item for sale in the Weapon Shop: one card for the buyer's hand.
 ///
 /// Immutable by design.
 class WeaponItem {
@@ -14,9 +13,8 @@ class WeaponItem {
     required this.id,
     required this.nameKey,
     required this.diamondCost,
-    this.card,
-    this.tanks = 0,
-    this.bombers = 0,
+    required this.unlockTurn,
+    required this.card,
   });
 
   /// Unique string identifier for this item (used as a stable key).
@@ -28,14 +26,11 @@ class WeaponItem {
   /// Diamonds cost to purchase this item.
   final int diamondCost;
 
-  /// The card this item adds to the buyer's hand, if any.
-  final AbilityType? card;
+  /// The earliest turn at which this item appears in the shop.
+  final int unlockTurn;
 
-  /// Tanks this item adds.
-  final int tanks;
-
-  /// Bombers this item adds.
-  final int bombers;
+  /// The card this item adds to the buyer's hand.
+  final AbilityType card;
 
   // ─── Equality ─────────────────────────────────────────────────────────────
 
@@ -46,15 +41,15 @@ class WeaponItem {
     return id == other.id &&
         nameKey == other.nameKey &&
         diamondCost == other.diamondCost &&
-        card == other.card &&
-        tanks == other.tanks &&
-        bombers == other.bombers;
+        unlockTurn == other.unlockTurn &&
+        card == other.card;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, nameKey, diamondCost, card, tanks, bombers);
+  int get hashCode => Object.hash(id, nameKey, diamondCost, unlockTurn, card);
 
   @override
-  String toString() => 'WeaponItem(id: $id, cost: $diamondCost diamonds)';
+  String toString() =>
+      'WeaponItem(id: $id, cost: $diamondCost diamonds, '
+      'unlockTurn: $unlockTurn, card: $card)';
 }

@@ -1,27 +1,20 @@
-// Widget tests for the new-game picker and the Africa game screen: the city
-// map with outlined armies, the Weapon Shop beside the map, the cards, the
-// action buttons and dragging soldiers from a city to its neighbour.
-import 'dart:math';
-
+// Widget tests for the new-game picker and the Africa game screen.
 import 'package:flame/game.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:harita/core/constants.dart';
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/domain/models/ai_difficulty.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
-import 'package:harita/domain/models/special_ability.dart';
-import 'package:harita/domain/services/economy_service.dart';
 import 'package:harita/game/war_game.dart';
 import 'package:harita/infrastructure/persistence/hive_save_repository.dart';
 import 'package:harita/presentation/screens/game_screen.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 import 'package:harita/presentation/widgets/common/difficulty_picker.dart';
-import 'package:harita/presentation/widgets/hud/ability_panel.dart';
 
 class _NoSave implements SaveRepository {
   @override
@@ -40,11 +33,9 @@ Future<AppStrings> _strings(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('new-game picker: 1 or 2 players, 1–10 bots, Çok Kolay / Orta '
-      '/ Zor', (tester) async {
-    tester.view.physicalSize = const Size(420, 1000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
+  testWidgets('new-game picker: 1–6 bots and Çok Kolay / Orta / Zor', (
+    tester,
+  ) async {
     final strings = await _strings(tester);
     NewGameChoice? picked;
     await tester.pumpWidget(
@@ -61,145 +52,131 @@ void main() {
     await tester.tap(find.text('go'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Kaç kişi oynuyor?'), findsOneWidget);
     expect(find.text('Kaç bot oynasın?'), findsOneWidget);
-    for (var n = 1; n <= kMaxBots; n++) {
+    for (var n = 1; n <= 6; n++) {
       expect(find.byKey(Key('bots_$n')), findsOneWidget);
     }
     expect(find.text('Çok Kolay'), findsOneWidget);
     expect(find.text('Orta'), findsOneWidget);
     expect(find.text('Zor'), findsOneWidget);
-    // One colour dot per army (you + 5 bots by default).
-    expect(find.byType(CircleAvatar), findsNWidgets(6));
+    // One colour dot per army (you + 1 bot).
+    expect(find.byType(CircleAvatar), findsNWidgets(2));
 
-    await tester.tap(find.byKey(const Key('bots_10')));
-    await tester.tap(find.byKey(const Key('humans_2')));
+    await tester.tap(find.byKey(const Key('bots_6')));
     await tester.pump();
-    expect(find.byType(CircleAvatar), findsNWidgets(12));
+    expect(find.byType(CircleAvatar), findsNWidgets(7));
 
     await tester.tap(find.byKey(const Key('difficulty_hard')));
     await tester.pumpAndSettle();
     expect(picked?.difficulty, AiDifficulty.hard);
-    expect(picked?.bots, 10);
-    expect(picked?.humans, 2);
+    expect(picked?.bots, 6);
   });
 
   for (final (name, size) in [
     ('africa_map', const Size(1280, 800)),
     ('africa_map_phone', const Size(400, 860)),
   ]) {
-    testWidgets('$name: the city map, the shop beside it and a tap that '
-        'selects a city', (tester) async {
-      final (game, container) = await _pumpGame(tester, size, name);
-      expect(game.userZoom, WarGame.startZoom);
+    testWidgets('$name: Africa map renders and a tap selects a tile', (
+      tester,
+    ) async {
+      await _pumpGame(tester, size, name);
     });
   }
 
-  testWidgets('the Weapon Shop lists every card, tanks and bombers from the '
-      'first turn', (tester) async {
-    final (_, container) = await _pumpGame(tester, const Size(1280, 800), null);
-    expect(find.byKey(const Key('weapon_shop')), findsOneWidget);
-    for (final item in kWeaponCatalog) {
-      expect(find.byKey(Key('shop_${item.id}')), findsOneWidget);
-    }
-    for (final name in [
-      'Mega Bomba',
-      'Atom Bombası',
-      'Nükleer Bomba',
-      'Haraç Kes',
-      'Tank',
-      'Bombardıman Uçağı',
-    ]) {
-      expect(find.text(name), findsWidgets, reason: name);
-    }
-    // Buy a tank with enough diamonds.
-    final n = container.read(gameProvider.notifier);
-    n.state = n.state.withArmy(n.state.army1.copyWith(diamondBalance: 300));
+  testWidgets('real fingers: one finger pans, two fingers pinch-zoom, the '
+      'wheel zooms, a tap still selects', (tester) async {
+    final game = await _pumpGame(tester, const Size(400, 860), null);
+    final rect = tester.getRect(find.byType(GameWidget<WarGame>));
+    final center = rect.center;
+    game.zoomTo(3);
     await tester.pump();
-    await tester.tap(find.byKey(const Key('shop_tank')));
-    await tester.pump();
-    expect(container.read(gameProvider).army1.tanks, kStartTanks + 1);
-    expect(container.read(gameProvider).army1.diamondBalance, 100);
-  });
 
-  testWidgets('cards show how many you hold; Kart Çek adds one', (
-    tester,
-  ) async {
-    final (_, container) = await _pumpGame(tester, const Size(400, 860), null);
-    // The hand scrolls sideways through all seven cards.
-    final hand = find.descendant(
-      of: find.byType(AbilityPanel),
-      matching: find.byType(Scrollable),
-    );
-    for (final type in AbilityType.values) {
-      await tester.scrollUntilVisible(
-        find.byKey(Key('ability_${type.name}')),
-        80,
-        scrollable: hand,
-      );
-      expect(find.byKey(Key('ability_${type.name}')), findsOneWidget);
-    }
-    await tester.drag(hand, const Offset(2000, 0));
-    await tester.pump();
-    final count = tester.widget<Text>(
-      find.descendant(
-        of: find.byKey(const Key('card_count_fireBomb')),
-        matching: find.byType(Text),
-      ),
-    );
-    expect(count.data, '1');
-
-    await tester.tap(find.byKey(const Key('btn_draw_card')));
-    await tester.pump();
-    final army = container.read(gameProvider).army1;
-    expect(army.hasDrawnCard, isTrue);
-    expect(army.cards.values.fold(0, (a, b) => a + b), 2);
-    expect(find.textContaining('Kart çektin'), findsOneWidget);
-  });
-
-  testWidgets('drag soldiers from your city to a neighbour: they march and '
-      'fight', (tester) async {
-    final (game, container) = await _pumpGame(
-      tester,
-      const Size(1280, 800),
-      null,
-    );
-    final state = container.read(gameProvider);
-    final (src, dst) = _attackable(state);
-    final origin = tester.getTopLeft(find.byType(GameWidget<WarGame>));
-    Offset screenOf(int id) {
-      final p = game.mapComponent.graph.getPosition(id);
-      final s = game.camera.localToGlobal(Vector2(p.dx, p.dy));
-      return origin + Offset(s.x, s.y);
-    }
-
-    final gesture = await tester.startGesture(screenOf(src));
-    await tester.pump(const Duration(milliseconds: 50));
+    // One finger drags the map: the camera follows the finger.
+    final before = game.camera.viewfinder.position.clone();
+    final drag = await tester.startGesture(center);
     for (var i = 1; i <= 10; i++) {
-      await gesture.moveTo(Offset.lerp(screenOf(src), screenOf(dst), i / 10)!);
+      await drag.moveTo(center + Offset(-6.0 * i, -4.0 * i));
       await tester.pump(const Duration(milliseconds: 16));
     }
-    await gesture.up();
+    await drag.up();
     await tester.pump();
-    // The soldiers are on their way…
-    expect(container.read(battleFxProvider), isNotEmpty);
-    expect(
-      container.read(gameProvider).territories[dst].ownerArmyId,
-      isNot(ArmyId.army1),
+    final moved = game.camera.viewfinder.position - before;
+    final zoom = game.camera.viewfinder.zoom;
+    // Dragged 60 × 40 px to the upper left: the view moves down-right by
+    // the same distance in map units (minus the first few pixels of slop).
+    expect(moved.x, closeTo(60 / zoom, 12 / zoom));
+    expect(moved.y, closeTo(40 / zoom, 12 / zoom));
+    expect(game.userZoom, 3, reason: 'one finger never zooms');
+
+    // Two fingers spread apart: zoom in around the point between them.
+    final anchorScreen = Vector2(center.dx - rect.left, center.dy - rect.top);
+    final anchorWorld = game.camera.globalToLocal(anchorScreen);
+    final a = await tester.startGesture(center - const Offset(40, 0));
+    final b = await tester.startGesture(center + const Offset(40, 0));
+    for (var i = 1; i <= 10; i++) {
+      await a.moveTo(center - Offset(40.0 + 4 * i, 0));
+      await b.moveTo(center + Offset(40.0 + 4 * i, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await a.up();
+    await b.up();
+    await tester.pump();
+    // 80 px apart → 160 px apart: twice the zoom.
+    expect(game.userZoom, closeTo(3 * 160 / 80, 0.05));
+    // The map point between the fingers stayed under them.
+    final after = game.camera.localToGlobal(anchorWorld);
+    expect(after.x, closeTo(anchorScreen.x, 2));
+    expect(after.y, closeTo(anchorScreen.y, 2));
+
+    // Pinching in zooms back out.
+    final c = await tester.startGesture(center - const Offset(80, 0));
+    final d = await tester.startGesture(center + const Offset(80, 0));
+    for (var i = 1; i <= 10; i++) {
+      await c.moveTo(center - Offset(80.0 - 4 * i, 0));
+      await d.moveTo(center + Offset(80.0 - 4 * i, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await c.up();
+    await d.up();
+    await tester.pump();
+    // 160 px apart → 80 px apart: half the zoom.
+    expect(game.userZoom, closeTo(6 * 80 / 160, 0.05));
+
+    // The mouse wheel zooms too.
+    final wheelBefore = game.userZoom;
+    final mouse = TestPointer(1, PointerDeviceKind.mouse);
+    await tester.sendEventToBinding(mouse.hover(center));
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, -20)));
+    await tester.pump();
+    expect(game.userZoom, greaterThan(wheelBefore));
+
+    // A plain tap (even with a little jitter) still selects a tile.
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(GameScreen)),
     );
-    await tester.pump(const Duration(milliseconds: kMarchMs + 50));
-    // …and took the city.
-    final after = container.read(gameProvider);
-    expect(after.territories[dst].ownerArmyId, ArmyId.army1);
-    expect(after.territories[src].unitCount, 1);
-    await tester.pump(const Duration(seconds: 2));
+    final own = container
+        .read(gameProvider)
+        .territories
+        .firstWhere((t) => t.ownerArmyId == ArmyId.army1);
+    final p = game.mapComponent.graph.positionOf(own.id).offset;
+    final world = game.camera.localToGlobal(Vector2(p.dx, p.dy));
+    game.camera.viewfinder.position = Vector2(p.dx, p.dy);
+    await tester.pump();
+    final screen = game.camera.localToGlobal(Vector2(p.dx, p.dy));
+    expect(world, isNotNull);
+    final tap = await tester.startGesture(
+      rect.topLeft + Offset(screen.x, screen.y),
+    );
+    await tap.moveBy(const Offset(2, 1));
+    await tap.up();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(container.read(selectedTerritoryProvider), own.id);
   });
 
   testWidgets('pinch zoom is clamped and keeps the map on screen', (
     tester,
   ) async {
-    final (game, _) = await _pumpGame(tester, const Size(400, 860), null);
-    game.zoomTo(1);
+    final game = await _pumpGame(tester, const Size(400, 860), null);
     final fit = game.camera.viewfinder.zoom;
     game.zoomTo(3);
     expect(game.camera.viewfinder.zoom, closeTo(fit * 3, 1e-4));
@@ -216,102 +193,77 @@ void main() {
   });
 }
 
-/// An own city with soldiers and a weaker neutral neighbour.
-(int, int) _attackable(GameState s) {
-  for (final t in s.territories) {
-    if (t.ownerArmyId != ArmyId.army1 || t.unitCount < 50) continue;
-    for (final adj in t.adjacentIds) {
-      final n = s.territories[adj];
-      if (n.ownerArmyId == null && n.unitCount < 40) return (t.id, adj);
-    }
-  }
-  throw StateError('no attack found');
-}
-
-/// Pumps the game screen at [size] (3 bots, Zor, fixed random numbers);
-/// when [golden] is set, also compares the map with `goldens/<golden>.png`.
-Future<(WarGame, ProviderContainer)> _pumpGame(
+/// Pumps the game screen at [size]; when [golden] is set, also compares the
+/// screen with `goldens/<golden>.png`. Returns the running [WarGame].
+Future<WarGame> _pumpGame(
   WidgetTester tester,
   Size size,
   String? golden,
 ) async {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1;
-  addTearDown(tester.view.reset);
+  {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
 
-  final container = ProviderContainer(
-    overrides: [
-      saveRepositoryProvider.overrideWithValue(_NoSave()),
-      gameRandomProvider.overrideWithValue(Random(42)),
-    ],
-  );
-  addTearDown(container.dispose);
-  container
-      .read(newGameSettingsProvider.notifier)
-      .set(difficulty: AiDifficulty.hard, bots: 3);
-  await tester.runAsync(() => container.read(localeServiceProvider.future));
+    final container = ProviderContainer(
+      overrides: [saveRepositoryProvider.overrideWithValue(_NoSave())],
+    );
+    addTearDown(container.dispose);
+    container.read(newGameDifficultyProvider.notifier).set(AiDifficulty.hard);
+    container.read(newGameBotCountProvider.notifier).set(3);
+    await tester.runAsync(() => container.read(localeServiceProvider.future));
 
-  await tester.pumpWidget(
-    UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: GameScreen()),
-    ),
-  );
-  for (var i = 0; i < 10; i++) {
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: GameScreen()),
+      ),
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final state = container.read(gameProvider);
+    expect(state.difficulty, AiDifficulty.hard);
+    expect(state.armies, hasLength(4));
+    // One chip per army in the resource bar, plus the diamond balance.
+    for (final id in ArmyId.values.take(4)) {
+      expect(find.byKey(Key('army_chip_${id.name}')), findsOneWidget);
+    }
+    expect(find.byKey(const Key('diamond_balance')), findsOneWidget);
+    // No laser card any more; the Fire Bomb card is green.
+    expect(find.byKey(const Key('ability_fireBomb')), findsOneWidget);
+    expect(find.text('Direkt'), findsNothing);
+
+    // Tap the centre of the player's start tile on the Flame canvas.
+    final game = tester
+        .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
+        .game!;
+    // Let the satellite picture decode (real async work), then redraw.
+    for (var i = 0; i < 50 && !game.mapComponent.hasSatellite; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(game.mapComponent.hasSatellite, isTrue);
+    await tester.pump();
+    final startId = state.territories
+        .firstWhere((t) => t.ownerArmyId == ArmyId.army1)
+        .id;
+    final world = game.mapComponent.graph.positionOf(startId).offset;
+    final screen = game.camera.localToGlobal(Vector2(world.dx, world.dy));
+    final origin = tester.getTopLeft(find.byType(GameWidget<WarGame>));
+    await tester.tapAt(origin + Offset(screen.x, screen.y));
     await tester.pump(const Duration(milliseconds: 100));
-  }
+    expect(container.read(selectedTerritoryProvider), startId);
 
-  final state = container.read(gameProvider);
-  expect(state.difficulty, AiDifficulty.hard);
-  expect(state.armies, hasLength(4));
-  for (final id in ArmyId.values.take(4)) {
-    expect(find.byKey(Key('army_chip_${id.name}')), findsOneWidget);
+    if (golden != null) {
+      await expectLater(
+        find.byType(GameWidget<WarGame>),
+        matchesGoldenFile('goldens/$golden.png'),
+      );
+    }
+    return game;
   }
-  expect(find.byKey(const Key('diamond_balance')), findsOneWidget);
-  expect(find.byKey(const Key('tank_count')), findsOneWidget);
-  expect(find.byKey(const Key('bomber_count')), findsOneWidget);
-  expect(find.byKey(const Key('weapon_shop')), findsOneWidget);
-  for (final key in [
-    'btn_draw_card',
-    'btn_attack',
-    'btn_bomber',
-    'btn_end_turn',
-  ]) {
-    expect(find.byKey(Key(key)), findsOneWidget, reason: key);
-  }
-
-  final game = tester
-      .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
-      .game!;
-  // Let the satellite picture decode (real async work), then redraw.
-  for (var i = 0; i < 50 && !game.mapComponent.hasSatellite; i++) {
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pump(const Duration(milliseconds: 16));
-  }
-  expect(game.mapComponent.hasSatellite, isTrue);
-  await tester.pump();
-
-  // Tap the player's strongest city on the Flame canvas.
-  final startId = state.territories
-      .where((t) => t.ownerArmyId == ArmyId.army1)
-      .reduce((a, b) => a.unitCount >= b.unitCount ? a : b)
-      .id;
-  final world = game.mapComponent.graph.getPosition(startId);
-  final screen = game.camera.localToGlobal(Vector2(world.dx, world.dy));
-  final origin = tester.getTopLeft(find.byType(GameWidget<WarGame>));
-  await tester.tapAt(origin + Offset(screen.x, screen.y));
-  await tester.pump(const Duration(milliseconds: 100));
-  expect(container.read(selectedTerritoryProvider), startId);
-  expect(find.byKey(const Key('city_card')), findsOneWidget);
-  expect(find.text('Kazablanka'), findsWidgets);
-
-  if (golden != null) {
-    await expectLater(
-      find.byType(MaterialApp),
-      matchesGoldenFile('goldens/$golden.png'),
-    );
-  }
-  return (game, container);
 }

@@ -1,8 +1,9 @@
-/// City information panel for Harita: Kendi İmparatorluğunu Kur.
+/// Territory info panel widget for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// Shows the selected city: owner, soldiers, mines, forest, and its
-/// neighbours — with an attack button for each neighbour the player can
-/// send soldiers to.
+/// Displays information about the currently selected territory:
+/// owner, unit count, and adjacent territory names.
+///
+/// Requirements: 3.3, 11.1, 11.2, 11.3
 library;
 
 import 'package:flutter/material.dart';
@@ -13,204 +14,344 @@ import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
-import 'package:harita/domain/services/combat_service.dart';
+import 'package:harita/domain/models/territory.dart';
 import 'package:harita/infrastructure/map/territory_graph.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
-import 'package:harita/presentation/widgets/common/game_names.dart';
 
 // ─── TerritoryInfoPanel ───────────────────────────────────────────────────────
 
-/// Card with the selected city, or a hint when nothing is selected.
+/// A card panel that displays contextual information for the territory
+/// currently selected in [selectedTerritoryProvider].
+///
+/// When no territory is selected the panel shows a subtle prompt inviting
+/// the player to tap the map (Req 3.3).
+///
+/// Layout:
+/// ```
+/// ┌──────────────────────────────────────┐
+/// │  🗺  Territory Name                  │
+/// ├──────────────────────────────────────┤
+/// │  Owner:    Army 1 / Neutral          │
+/// │  Units:    12                        │
+/// │  Adjacent: A, B, C…                  │
+/// └──────────────────────────────────────┘
+/// ```
 class TerritoryInfoPanel extends ConsumerWidget {
   const TerritoryInfoPanel({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedId = ref.watch(selectedTerritoryProvider);
-    final state = ref.watch(gameProvider);
+    final gameState = ref.watch(gameProvider);
     final locale = ref.watch(localeProvider);
     final localeServiceAsync = ref.watch(localeServiceProvider);
 
     return localeServiceAsync.when(
-      loading: () => const SizedBox.shrink(),
+      loading: () => const _LoadingPanel(),
       error: (_, __) => const SizedBox.shrink(),
       data: (localeService) {
         final strings = localeService.of(locale);
-        final humanPlays =
-            state.activeArmy.isHuman && state.phase == GamePhase.playing;
-        if (selectedId == null || selectedId >= state.territories.length) {
-          return _Hint(
-            text: humanPlays ? strings.hintAttack : strings.hintSelectTerritory,
-          );
+
+        // ── Nothing selected ────────────────────────────────────────────────
+        final isPlayerTurn =
+            gameState.activeArmyId == ArmyId.army1 &&
+            gameState.phase == GamePhase.playing;
+        final hint = isPlayerTurn
+            ? '${strings.hintSelectTerritory}\n${strings.hintAttack}'
+            : strings.hintSelectTerritory;
+
+        if (selectedId == null) {
+          return _NoSelectionPanel(hint: hint);
         }
-        return _CityCard(
-          state: state,
-          cityId: selectedId,
-          strings: strings,
-          humanPlays: humanPlays,
-          onAttack: (target) => ref
+
+        // ── Look up the territory ────────────────────────────────────────────
+        final territories = gameState.territories;
+        final Territory? territory = selectedId < territories.length
+            ? territories[selectedId]
+            : null;
+
+        if (territory == null) {
+          return _NoSelectionPanel(hint: hint);
+        }
+
+        final canAttackFrom =
+            isPlayerTurn && territory.ownerArmyId == ArmyId.army1;
+
+        // ── Resolve owner label ───────────────────────────────────────────
+        final String ownerLabel = _ownerLabel(territory.ownerArmyId, strings);
+
+        // ── Resolve adjacent territory names ──────────────────────────────
+        final adjacent = territory.adjacentIds
+            .where((adjId) => adjId < territories.length)
+            .map((adjId) {
+              final adjTerritory = territories[adjId];
+              return _AdjacentEntry(
+                id: adjId,
+                name:
+                    '${_direction(territory.id, adjId)} '
+                    '${localeService.translate(adjTerritory.name, locale)}',
+                units: adjTerritory.unitCount,
+                owner: adjTerritory.ownerArmyId,
+                canAttack:
+                    canAttackFrom && adjTerritory.ownerArmyId != ArmyId.army1,
+              );
+            })
+            .toList();
+
+        // ── Resolve the panel title (territory name) ──────────────────────
+        final territoryName = localeService.translate(territory.name, locale);
+
+        return _InfoCard(
+          territoryName: territoryName,
+          ownerLabel: strings.territoryOwnerLabel,
+          ownerValue: ownerLabel,
+          unitsLabel: strings.territoryUnitsLabel,
+          unitCount: territory.unitCount,
+          adjacentLabel: strings.territoryAdjacentLabel,
+          adjacent: adjacent,
+          ownerArmyId: territory.ownerArmyId,
+          attackLabel: strings.btnAttack,
+          onAttack: (targetId) => _attack(ref, territory.id, targetId),
+          deployLabel: canAttackFrom && gameState.army1.totalUnitPool > 0
+              ? strings.btnDeploy(count: '${gameState.army1.totalUnitPool}')
+              : null,
+          reserveText: territory.ownerArmyId == ArmyId.army1
+              ? (strings.reserveLabel, '${gameState.army1.totalUnitPool}')
+              : null,
+          mineText: territory.hasDiamondMine
+              ? (strings.diamondMineLabel, '+$kDiamondMineReward')
+              : territory.hasGoldMine
+              ? (strings.goldMineLabel, '+$kGoldMineReward')
+              : null,
+          mineIsGold: !territory.hasDiamondMine && territory.hasGoldMine,
+          terrainText: (
+            strings.terrainLabel,
+            strings.terrainName(
+              TerritoryGraph.bundled().terrainOf(territory.id).name,
+            ),
+          ),
+          terrain: TerritoryGraph.bundled().terrainOf(territory.id),
+          onDeploy: () => ref
               .read(gameProvider.notifier)
-              .dispatchTroops(selectedId, target),
+              .deployReinforcements(territory.id),
         );
       },
     );
   }
-}
 
-class _Hint extends StatelessWidget {
-  const _Hint({required this.text});
+  /// Arrow pointing from tile [from] to its neighbour [to] on the grid, so
+  /// neighbouring squares of the same country can be told apart.
+  String _direction(int from, int to) {
+    final graph = TerritoryGraph.bundled();
+    final a = graph.positionOf(from);
+    final b = graph.positionOf(to);
+    if (graph.isSeaLink(from, to)) return '≈';
+    if (b.row < a.row) return '↑';
+    if (b.row > a.row) return '↓';
+    if (b.col < a.col) return '←';
+    return '→';
+  }
 
-  final String text;
+  /// Declares an attack from [sourceId] into [targetId]. The notifier emits
+  /// a [GameFeedback] that the game screen turns into sound + a message.
+  void _attack(WidgetRef ref, int sourceId, int targetId) {
+    ref.read(gameProvider.notifier).declareAttack(sourceId, targetId);
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          const Icon(Icons.touch_app_rounded, color: AppTheme.army1Primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(fontSize: 15, color: AppTheme.kTextDark),
-            ),
-          ),
-        ],
-      ),
-    );
+  /// Converts an optional [ArmyId] to the localised owner label.
+  String _ownerLabel(ArmyId? ownerArmyId, AppStrings strings) {
+    if (ownerArmyId == null) return strings.territoryOwnerNeutral;
+    return strings.armyName(ownerArmyId.index);
   }
 }
 
-// ─── _CityCard ────────────────────────────────────────────────────────────────
+// ─── _InfoCard ────────────────────────────────────────────────────────────────
 
-class _CityCard extends StatelessWidget {
-  const _CityCard({
-    required this.state,
-    required this.cityId,
-    required this.strings,
-    required this.humanPlays,
+/// The populated card shown when a territory is selected.
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({
+    required this.territoryName,
+    required this.ownerLabel,
+    required this.ownerValue,
+    required this.unitsLabel,
+    required this.unitCount,
+    required this.adjacentLabel,
+    required this.adjacent,
+    required this.ownerArmyId,
+    required this.attackLabel,
     required this.onAttack,
+    required this.deployLabel,
+    required this.onDeploy,
+    required this.reserveText,
+    required this.mineText,
+    required this.mineIsGold,
+    required this.terrainText,
+    required this.terrain,
   });
 
-  final GameState state;
-  final int cityId;
-  final AppStrings strings;
-  final bool humanPlays;
+  final String territoryName;
+  final String ownerLabel;
+  final String ownerValue;
+  final String unitsLabel;
+  final int unitCount;
+  final String adjacentLabel;
+  final List<_AdjacentEntry> adjacent;
+  final ArmyId? ownerArmyId;
+  final String attackLabel;
   final void Function(int targetId) onAttack;
+
+  /// Label of the deploy button, or `null` to hide it.
+  final String? deployLabel;
+  final VoidCallback onDeploy;
+
+  /// (label, value) of the reserve-soldier row, or `null` to hide it.
+  final (String, String)? reserveText;
+
+  /// (label, value) of the diamond- or gold-mine row, or `null` to hide it.
+  final (String, String)? mineText;
+
+  /// Whether [mineText] describes a gold mine (else a diamond mine).
+  final bool mineIsGold;
+
+  /// (label, value) of the terrain row (forest, desert, …).
+  final (String, String) terrainText;
+
+  /// The tile's terrain (picks the row's icon).
+  final Terrain terrain;
 
   @override
   Widget build(BuildContext context) {
-    final graph = TerritoryGraph.bundled();
-    final lang = strings.languageCode;
-    final city = state.territories[cityId];
-    final owner = city.ownerArmyId;
-    final headerColor = owner == null
-        ? AppTheme.kNeutralLight
-        : AppTheme.armyColor(owner);
-    final onHeader = owner == null ? AppTheme.kTextDark : AppTheme.kTextLight;
-    final me = state.activeArmyId;
-    final mine = humanPlays && owner == me;
-    final strength = mine ? attackStrength(state.activeArmy, city) : null;
+    final Color headerColor = _headerColor(ownerArmyId);
+    final Color onHeaderColor = ownerArmyId != null
+        ? AppTheme.kTextLight
+        : AppTheme.kTextDark;
 
     return Card(
-      key: const Key('city_card'),
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       clipBehavior: Clip.antiAlias,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // ── Header ─────────────────────────────────────────────────────
           Container(
             color: headerColor,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
-                Icon(Icons.location_city_rounded, color: onHeader),
-                const SizedBox(width: 8),
+                Icon(
+                  Icons.map_outlined,
+                  color: onHeaderColor,
+                  size: 24,
+                  semanticLabel: 'Territory',
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    graph.cityName(cityId, lang),
-                    style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w800,
-                      color: onHeader,
+                    territoryName,
+                    style: AppTheme.headingStyle.copyWith(
+                      color: onHeaderColor,
+                      fontSize: 20,
                     ),
-                  ),
-                ),
-                Text(
-                  '${city.unitCount}',
-                  key: const Key('city_units'),
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    color: onHeader,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
           ),
+
+          // ── Body ───────────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _Line(
-                  label: strings.territoryOwnerLabel,
-                  value: owner == null
-                      ? strings.territoryOwnerNeutral
-                      : armyDisplayName(state, owner, strings),
+                // Owner row
+                _InfoRow(
+                  icon: Icons.flag_outlined,
+                  iconColor: _ownerIconColor(ownerArmyId),
+                  label: ownerLabel,
+                  value: ownerValue,
                 ),
-                _Line(
-                  label: strings.territoryUnitsLabel,
-                  value: '${city.unitCount}',
+                const SizedBox(height: 10),
+
+                // Unit count row
+                _InfoRow(
+                  icon: Icons.people_outline,
+                  iconColor: AppTheme.army1Primary,
+                  label: unitsLabel,
+                  value: unitCount.toString(),
                 ),
-                if (strength != null)
-                  _Line(label: strings.strengthLabel, value: '$strength'),
-                if (city.hasDiamondMine)
-                  _Badge(
-                    icon: Icons.diamond_rounded,
-                    color: AppTheme.kDiamond,
-                    text: '${strings.diamondMineLabel} +$kDiamondMineReward',
-                  ),
-                if (city.hasGoldMine)
-                  _Badge(
-                    icon: Icons.paid_rounded,
-                    color: AppTheme.kGold,
-                    text: '${strings.goldMineLabel} +$kGoldMineReward',
-                  ),
-                if (city.hasForest)
-                  _Badge(
-                    icon: Icons.forest_rounded,
-                    color: AppTheme.kAccentGreen,
-                    text: strings.forestLabel,
-                  ),
-                const SizedBox(height: 6),
-                Text(
-                  strings.territoryAdjacentLabel,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.kTextDark,
-                  ),
+                const SizedBox(height: 10),
+                _InfoRow(
+                  icon: switch (terrain) {
+                    Terrain.rainforest ||
+                    Terrain.woodland => Icons.forest_rounded,
+                    Terrain.savanna => Icons.grass_rounded,
+                    Terrain.steppe => Icons.landscape_rounded,
+                    Terrain.desert => Icons.wb_sunny_rounded,
+                  },
+                  iconColor: switch (terrain) {
+                    Terrain.rainforest => const Color(0xFF1B5E20),
+                    Terrain.woodland => const Color(0xFF558B2F),
+                    Terrain.savanna => const Color(0xFF9E9D24),
+                    Terrain.steppe => const Color(0xFF8D6E63),
+                    Terrain.desert => const Color(0xFFE65100),
+                  },
+                  label: terrainText.$1,
+                  value: terrainText.$2,
                 ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final adj in city.adjacentIds)
-                      _NeighbourChip(
-                        name: graph.cityName(adj, lang),
-                        units: state.territories[adj].unitCount,
-                        owner: state.territories[adj].ownerArmyId,
-                        canAttack: mine && city.unitCount >= 2,
-                        attackLabel: strings.btnAttack,
-                        onAttack: () => onAttack(adj),
-                        key: Key('neighbour_$adj'),
+                if (mineText != null) ...[
+                  const SizedBox(height: 10),
+                  _InfoRow(
+                    icon: mineIsGold
+                        ? Icons.paid_rounded
+                        : Icons.diamond_rounded,
+                    iconColor: mineIsGold ? AppTheme.kGold : AppTheme.kDiamond,
+                    label: mineText!.$1,
+                    value: mineText!.$2,
+                  ),
+                ],
+                if (reserveText != null) ...[
+                  const SizedBox(height: 10),
+                  _InfoRow(
+                    icon: Icons.groups_outlined,
+                    iconColor: AppTheme.kAccentGreen,
+                    label: reserveText!.$1,
+                    value: reserveText!.$2,
+                  ),
+                ],
+                if (deployLabel != null) ...[
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: onDeploy,
+                    icon: const Icon(Icons.add_circle_outline, size: 22),
+                    label: Text(
+                      deployLabel!,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                       ),
-                  ],
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.kAccentGreen,
+                      foregroundColor: AppTheme.kTextLight,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+
+                // Adjacent territories row
+                _AdjacentRow(
+                  label: adjacentLabel,
+                  entries: adjacent,
+                  attackLabel: attackLabel,
+                  onAttack: onAttack,
                 ),
               ],
             ),
@@ -219,127 +360,246 @@ class _CityCard extends StatelessWidget {
       ),
     );
   }
+
+  Color _headerColor(ArmyId? owner) =>
+      owner == null ? AppTheme.kNeutralLight : AppTheme.armyColor(owner);
+
+  Color _ownerIconColor(ArmyId? owner) => owner == null
+      ? const Color(0xFF757575) // neutral grey
+      : AppTheme.armyColor(owner);
 }
 
-class _Line extends StatelessWidget {
-  const _Line({required this.label, required this.value});
+// ─── _InfoRow ─────────────────────────────────────────────────────────────────
 
+/// A single labelled row with an icon, label text, and value text.
+///
+/// All text is >= 16 sp (Req 11.1) and uses high-contrast colours (Req 11.2).
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final Color iconColor;
   final String label;
   final String value;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Text.rich(
-        TextSpan(
-          children: [
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Icon label alongside text (Req 11.3)
+        Icon(icon, color: iconColor, size: 22),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text.rich(
             TextSpan(
-              text: '$label ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+              children: [
+                TextSpan(
+                  text: '$label ',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                TextSpan(text: value),
+              ],
             ),
-            TextSpan(
-              text: value,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
-        style: const TextStyle(fontSize: 15, color: AppTheme.kTextDark),
-      ),
-    );
-  }
-}
-
-class _Badge extends StatelessWidget {
-  const _Badge({required this.icon, required this.color, required this.text});
-
-  final IconData icon;
-  final Color color;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
+            style: AppTheme.bodyStyle.copyWith(
+              fontSize: 16,
+              color: AppTheme.kTextDark,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-class _NeighbourChip extends StatelessWidget {
-  const _NeighbourChip({
-    super.key,
-    required this.name,
-    required this.units,
-    required this.owner,
-    required this.canAttack,
+// ─── _AdjacentRow ─────────────────────────────────────────────────────────────
+
+/// Displays the adjacent territories label and a wrapping list of names.
+class _AdjacentRow extends StatelessWidget {
+  const _AdjacentRow({
+    required this.label,
+    required this.entries,
     required this.attackLabel,
     required this.onAttack,
   });
 
+  final String label;
+  final List<_AdjacentEntry> entries;
+  final String attackLabel;
+  final void Function(int targetId) onAttack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.device_hub_outlined,
+              color: AppTheme.kAccentPurple,
+              size: 22,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: AppTheme.bodyStyle.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                  color: AppTheme.kTextDark,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: entries
+              .map(
+                (e) => e.canAttack
+                    ? _AttackChip(
+                        entry: e,
+                        attackLabel: attackLabel,
+                        onPressed: () => onAttack(e.id),
+                      )
+                    : Chip(
+                        label: Text(
+                          '${e.name} (${e.units})',
+                          style: AppTheme.bodyStyle.copyWith(
+                            fontSize: 16,
+                            color: AppTheme.kTextDark,
+                          ),
+                        ),
+                        backgroundColor: AppTheme.kNeutralLight,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        visualDensity: VisualDensity.compact,
+                      ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── _NoSelectionPanel ────────────────────────────────────────────────────────
+
+/// Placeholder shown when no territory has been selected yet.
+class _NoSelectionPanel extends StatelessWidget {
+  const _NoSelectionPanel({required this.hint});
+
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.touch_app_outlined,
+              color: AppTheme.kAccentPurple,
+              size: 28,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                hint,
+                style: AppTheme.bodyStyle.copyWith(
+                  fontSize: 16,
+                  color: AppTheme.kTextDark,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── _LoadingPanel ────────────────────────────────────────────────────────────
+
+/// Minimal placeholder shown while the locale service is loading.
+class _LoadingPanel extends StatelessWidget {
+  const _LoadingPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: const Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+    );
+  }
+}
+
+// ─── _AdjacentEntry / _AttackChip ─────────────────────────────────────────────
+
+/// View data for one neighbouring territory.
+class _AdjacentEntry {
+  const _AdjacentEntry({
+    required this.id,
+    required this.name,
+    required this.units,
+    required this.owner,
+    required this.canAttack,
+  });
+
+  final int id;
   final String name;
   final int units;
   final ArmyId? owner;
   final bool canAttack;
+}
+
+/// Neighbour chip with a big "Attack" button (icon + text, Req 11.3).
+class _AttackChip extends StatelessWidget {
+  const _AttackChip({
+    required this.entry,
+    required this.attackLabel,
+    required this.onPressed,
+  });
+
+  final _AdjacentEntry entry;
   final String attackLabel;
-  final VoidCallback onAttack;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final owner = entry.owner;
     final color = owner == null
-        ? const Color(0xFF8D8D8D)
-        : AppTheme.armyColor(owner!);
-    return Material(
-      color: color.withAlpha(36),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: color, width: 1.5),
+        ? AppTheme.kTextDark
+        : AppTheme.armyColor(owner);
+    return ElevatedButton.icon(
+      onPressed: onPressed,
+      icon: const Icon(Icons.gps_fixed_rounded, size: 20),
+      label: Text(
+        '$attackLabel: ${entry.name} (${entry.units})',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: canAttack ? onAttack : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircleAvatar(radius: 6, backgroundColor: color),
-              const SizedBox(width: 4),
-              Text(
-                '$name $units',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.kTextDark,
-                ),
-              ),
-              if (canAttack) ...[
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.arrow_forward_rounded,
-                  size: 16,
-                  color: color,
-                  semanticLabel: attackLabel,
-                ),
-              ],
-            ],
-          ),
-        ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppTheme.kSurface,
+        foregroundColor: color,
+        side: BorderSide(color: color, width: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     );
   }

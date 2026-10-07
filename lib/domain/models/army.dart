@@ -5,22 +5,29 @@ import 'package:harita/domain/models/special_ability.dart';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
-/// Identifies an army, in turn order. [army1] is always a human player;
-/// in a two-player game [army2] is the second human. The others are bots
-/// (up to [kMaxBots]).
+/// Identifies an army. [army1] is the human player; [army2] … [army7] are
+/// the bots (up to [kMaxBots]), in turn order.
 enum ArmyId {
+  /// The human player (blue).
   army1,
+
+  /// Bot 1 (red).
   army2,
+
+  /// Bot 2.
   army3,
+
+  /// Bot 3.
   army4,
+
+  /// Bot 4.
   army5,
+
+  /// Bot 5.
   army6,
+
+  /// Bot 6.
   army7,
-  army8,
-  army9,
-  army10,
-  army11,
-  army12,
 }
 
 /// Specifies whether the army is controlled by a human or the AI.
@@ -42,11 +49,8 @@ class Army {
     required this.id,
     required this.kind,
     required this.diamondBalance,
+    required this.totalUnitPool,
     Map<AbilityType, int> cards = const {},
-    this.tanks = 0,
-    this.bombers = 0,
-    this.bombersFlown = 0,
-    this.tanksUsed = 0,
     this.hasDrawnCard = false,
   }) : cards = Map.unmodifiable({
          for (final e in cards.entries)
@@ -62,20 +66,12 @@ class Army {
   /// Current diamond (Elmas) balance.
   final int diamondBalance;
 
-  /// Cards in hand: how many of each (types with none are left out).
+  /// Undeployed soldier units available to place on territories.
+  final int totalUnitPool;
+
+  /// Cards in hand ("kartlar"): how many of each (types with none are left
+  /// out). Playing a card uses one up.
   final Map<AbilityType, int> cards;
-
-  /// Tanks. Each joins one attack per turn (see [kTankPower]).
-  final int tanks;
-
-  /// Tanks that already joined an attack this turn.
-  final int tanksUsed;
-
-  /// Bombers. Each flies one raid per turn (see [kBomberDamage]).
-  final int bombers;
-
-  /// Bombers that already flew this turn.
-  final int bombersFlown;
 
   /// Whether the free card of this turn ("Kart Çek") was drawn.
   final bool hasDrawnCard;
@@ -83,14 +79,8 @@ class Army {
   /// Number of [type] cards in hand.
   int cardCount(AbilityType type) => cards[type] ?? 0;
 
-  /// Bombers that can still fly this turn.
-  int get bombersReady => bombers - bombersFlown;
-
-  /// Tanks that can still join an attack this turn.
-  int get tanksReady => tanks - tanksUsed;
-
-  /// Whether this army is played by a person.
-  bool get isHuman => kind == ArmyKind.human;
+  /// Number of cards in hand.
+  int get cardTotal => cards.values.fold(0, (a, b) => a + b);
 
   /// Returns a copy with [delta] more (or fewer) [type] cards.
   Army withCard(AbilityType type, int delta) =>
@@ -102,22 +92,16 @@ class Army {
     ArmyId? id,
     ArmyKind? kind,
     int? diamondBalance,
+    int? totalUnitPool,
     Map<AbilityType, int>? cards,
-    int? tanks,
-    int? bombers,
-    int? bombersFlown,
-    int? tanksUsed,
     bool? hasDrawnCard,
   }) {
     return Army(
       id: id ?? this.id,
       kind: kind ?? this.kind,
       diamondBalance: diamondBalance ?? this.diamondBalance,
+      totalUnitPool: totalUnitPool ?? this.totalUnitPool,
       cards: cards ?? this.cards,
-      tanks: tanks ?? this.tanks,
-      bombers: bombers ?? this.bombers,
-      bombersFlown: bombersFlown ?? this.bombersFlown,
-      tanksUsed: tanksUsed ?? this.tanksUsed,
       hasDrawnCard: hasDrawnCard ?? this.hasDrawnCard,
     );
   }
@@ -131,11 +115,8 @@ class Army {
     return id == other.id &&
         kind == other.kind &&
         diamondBalance == other.diamondBalance &&
+        totalUnitPool == other.totalUnitPool &&
         _mapEquals(cards, other.cards) &&
-        tanks == other.tanks &&
-        bombers == other.bombers &&
-        bombersFlown == other.bombersFlown &&
-        tanksUsed == other.tanksUsed &&
         hasDrawnCard == other.hasDrawnCard;
   }
 
@@ -144,20 +125,17 @@ class Army {
     id,
     kind,
     diamondBalance,
+    totalUnitPool,
     Object.hashAllUnordered(
       cards.entries.map((e) => Object.hash(e.key, e.value)),
     ),
-    tanks,
-    bombers,
-    bombersFlown,
-    tanksUsed,
     hasDrawnCard,
   );
 
   @override
   String toString() =>
       'Army(id: $id, kind: $kind, diamonds: $diamondBalance, '
-      'cards: $cards, tanks: $tanks, bombers: $bombers)';
+      'unitPool: $totalUnitPool, cards: $cards)';
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

@@ -7,42 +7,42 @@ library;
 /// ([Army.cards]); playing one uses it up. Cards come from the free draw of
 /// every turn ("Kart Çek") and from the Weapon Shop.
 enum AbilityType {
-  /// Captures 1 city next to your land.
+  /// Captures 2 tiles next to your land.
   fireBomb,
 
-  /// Captures 2 cities next to your land.
+  /// Captures 8 tiles next to your land.
   bombardment,
 
-  /// Adds soldiers to one of your cities.
+  /// Adds soldiers to one of your tiles.
   soldierSpell,
 
-  /// Captures 3 cities next to your land.
+  /// Captures 25 tiles next to your land.
   /// Labelled "Mega Bomba" (TR) / "Super Blast" (EN) in the UI.
   megaBomba,
 
-  /// Captures 4 cities anywhere on the map ("Atom Bombası").
+  /// "Atom Bombası": captures 25 tiles anywhere on the map.
   atomBomb,
 
-  /// Captures 6 cities anywhere on the map ("Nükleer Bomba").
+  /// "Nükleer Bomba": captures 40 tiles anywhere on the map.
   nuclearBomb,
 
-  /// "Haraç Kes": takes diamonds from the owner of the target city.
+  /// "Haraç Kes": takes diamonds from the owner of the target tile.
   tribute,
 }
 
 /// Helpers describing what each card does.
 extension AbilityTypeX on AbilityType {
-  /// Whether the card targets one of the playing army's own cities.
-  bool get targetsOwnCity => this == AbilityType.soldierSpell;
+  /// Whether the card targets one of the playing army's own tiles.
+  bool get targetsOwnTile => this == AbilityType.soldierSpell;
 
-  /// Whether the card can hit any city on the map (not only those next to
+  /// Whether the card can hit any tile on the map (not only those next to
   /// the army's land).
   bool get hitsAnywhere =>
       this == AbilityType.atomBomb ||
       this == AbilityType.nuclearBomb ||
       this == AbilityType.tribute;
 
-  /// Whether the card captures cities.
+  /// Whether the card captures tiles.
   bool get captures =>
       this != AbilityType.soldierSpell && this != AbilityType.tribute;
 }

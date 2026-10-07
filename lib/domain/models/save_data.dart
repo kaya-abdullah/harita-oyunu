@@ -137,8 +137,8 @@ Map<String, dynamic> _territoryToJson(Territory t) => {
   'adjacentIds': t.adjacentIds,
   'unitCount': t.unitCount,
   'ownerArmyId': t.ownerArmyId?.name,
+  'baseCapacity': t.baseCapacity,
   'diamondMine': t.hasDiamondMine,
-  'forest': t.hasForest,
 };
 
 Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
@@ -150,8 +150,8 @@ Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
   ownerArmyId: json['ownerArmyId'] != null
       ? _armyIdFromString(json['ownerArmyId'] as String)
       : null,
+  baseCapacity: json['baseCapacity'] as int?,
   hasDiamondMine: json['diamondMine'] as bool? ?? false,
-  hasForest: json['forest'] as bool? ?? false,
 );
 
 // ─── Army serialisation ───────────────────────────────────────────────────────
@@ -160,11 +160,8 @@ Map<String, dynamic> _armyToJson(Army a) => {
   'id': a.id.name,
   'kind': a.kind.name,
   'diamondBalance': a.diamondBalance,
+  'totalUnitPool': a.totalUnitPool,
   'cards': a.cards.map((type, count) => MapEntry(type.name, count)),
-  'tanks': a.tanks,
-  'bombers': a.bombers,
-  'bombersFlown': a.bombersFlown,
-  'tanksUsed': a.tanksUsed,
   'hasDrawnCard': a.hasDrawnCard,
 };
 
@@ -172,13 +169,10 @@ Army _armyFromJson(Map<String, dynamic> json) => Army(
   id: _armyIdFromString(json['id'] as String),
   kind: _armyKindFromString(json['kind'] as String),
   diamondBalance: json['diamondBalance'] as int,
+  totalUnitPool: json['totalUnitPool'] as int,
   cards: (json['cards'] as Map<String, dynamic>).map(
     (key, value) => MapEntry(_abilityTypeFromString(key), value as int),
   ),
-  tanks: json['tanks'] as int,
-  bombers: json['bombers'] as int,
-  bombersFlown: json['bombersFlown'] as int,
-  tanksUsed: json['tanksUsed'] as int,
   hasDrawnCard: json['hasDrawnCard'] as bool,
 );
 

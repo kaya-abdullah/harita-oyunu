@@ -1,8 +1,8 @@
 // End-to-end test of the whole app as the player sees it: the bomb intro,
-// the menu, the new-game picker (3 bots, Zor), the city map with the shop
-// beside it, Kart Çek, dragging soldiers to a city, a card, a bomber,
-// buying a tank, the bots' turns, going back to the menu and resuming —
-// then a two-player game where the phone passes between the players.
+// the menu, the new-game picker (3 bots, Zor), playing on the Africa map
+// (cards: hand, Kart Çek, folding panel, Fire Bomb; attack, shop), the
+// bots' turns, going back to the menu
+// and resuming the saved game.
 import 'dart:io';
 import 'dart:math';
 
@@ -62,7 +62,8 @@ void main() {
       overrides: [
         saveRepositoryProvider.overrideWithValue(repo),
         tutorialProvider.overrideWith(_MemoryTutorial.new),
-        gameRandomProvider.overrideWithValue(Random(11)),
+        // Fixed card draws and bot choices, so the round is the same every
+        // run.
         abilityServiceProvider.overrideWithValue(
           AbilityServiceImpl(random: Random(12)),
         ),
@@ -92,9 +93,8 @@ void main() {
       ),
     );
 
-    // ── 1. Intro: the drawn atom bomb, smoke, then the menu ───────────────
+    // ── 1. Intro: bomb, smoke, then the menu ──────────────────────────────
     expect(find.byKey(const Key('intro_overlay')), findsOneWidget);
-    expect(find.byKey(const Key('intro_photo')), findsNothing);
     await tester.pump(IntroScreen.duration);
     await frames();
     expect(find.byKey(const Key('intro_overlay')), findsNothing);
@@ -109,12 +109,10 @@ void main() {
     await tester.tap(find.text('Atla'));
     await frames();
 
-    // ── 3. Picker: 1 player, 3 bots, Zor ──────────────────────────────────
-    expect(find.text('Kaç kişi oynuyor?'), findsOneWidget);
+    // ── 3. Picker: 3 bots, Zor ────────────────────────────────────────────
     expect(find.text('Kaç bot oynasın?'), findsOneWidget);
     await tester.tap(find.byKey(const Key('bots_3')));
     await tester.pump();
-    await tester.ensureVisible(find.byKey(const Key('difficulty_hard')));
     await tester.tap(find.byKey(const Key('difficulty_hard')));
     await frames(10);
 
@@ -123,147 +121,123 @@ void main() {
     expect(state.armies, hasLength(4));
     expect(state.difficulty, AiDifficulty.hard);
     expect(state.territories, hasLength(kTerritoryCount));
-    expect(state.tilesOwnedBy(ArmyId.army1), 4);
     for (final id in ArmyId.values.take(4)) {
       expect(find.byKey(Key('army_chip_${id.name}')), findsOneWidget);
     }
-    // The shop is open beside the map with everything for sale.
-    expect(find.byKey(const Key('weapon_shop')), findsOneWidget);
-    expect(find.byKey(const Key('shop_fire_bomb')), findsOneWidget);
+    // The card panel: every card (the new Atom Bomb, Nuclear Bomb and Haraç
+    // Kes too) with how many are in hand; it scrolls sideways.
+    final hand = find.descendant(
+      of: find.byKey(const Key('cards_list')),
+      matching: find.byType(Scrollable),
+    );
+    for (final type in AbilityType.values) {
+      await tester.scrollUntilVisible(
+        find.byKey(Key('ability_${type.name}')),
+        80,
+        scrollable: hand,
+      );
+      expect(find.byKey(Key('ability_${type.name}')), findsOneWidget);
+    }
+    await tester.drag(hand, const Offset(2000, 0));
+    await tester.pump();
+    expect(find.text('Kartların ($kStartFireBombs)'), findsOneWidget);
+
+    // Kart Çek: one free card.
+    await tester.tap(find.byKey(const Key('btn_draw_card')));
+    await tester.pump();
+    expect(find.text('Kartların (${kStartFireBombs + 1})'), findsOneWidget);
+    expect(find.textContaining('Kart çektin'), findsOneWidget);
+    expect(container.read(gameProvider).army1.hasDrawnCard, isTrue);
+
+    // The panel folds shut and opens again.
+    await tester.tap(find.byKey(const Key('cards_toggle')));
+    await frames(3);
+    expect(find.byKey(const Key('cards_list')), findsNothing);
+    await tester.tap(find.byKey(const Key('cards_toggle')));
+    await frames(3);
+    expect(find.byKey(const Key('cards_list')), findsOneWidget);
 
     final game = tester
         .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
         .game!;
     final origin = tester.getTopLeft(find.byType(GameWidget<WarGame>));
-    Offset screenOf(int id) {
-      final p = game.mapComponent.graph.getPosition(id);
+    Future<void> tapTile(int id) async {
+      final p = game.mapComponent.graph.positionOf(id).offset;
       final s = game.camera.localToGlobal(Vector2(p.dx, p.dy));
-      return origin + Offset(s.x, s.y);
-    }
-
-    Future<void> tapCity(int id) async {
-      await tester.tapAt(screenOf(id));
+      await tester.tapAt(origin + Offset(s.x, s.y));
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    // ── 4. Kart Çek ──────────────────────────────────────────────────────
-    await tester.tap(find.byKey(const Key('btn_draw_card')));
-    await tester.pump();
-    state = container.read(gameProvider);
-    expect(state.army1.hasDrawnCard, isTrue);
-    expect(state.army1.cards.values.fold(0, (a, b) => a + b), 2);
-
-    // ── 5. Saldır: drag soldiers from a city to a weaker neighbour ────────
-    await tester.tap(find.byKey(const Key('btn_attack')));
-    await tester.pump();
-    expect(find.textContaining('sürükle'), findsWidgets);
-    final (src, dst) = _attackable(state);
-    game.camera.viewfinder.position = Vector2(
-      (game.mapComponent.graph.getPosition(src).dx +
-              game.mapComponent.graph.getPosition(dst).dx) /
-          2,
-      (game.mapComponent.graph.getPosition(src).dy +
-              game.mapComponent.graph.getPosition(dst).dy) /
-          2,
+    // Zoom in so the tiny tiles are easy to hit.
+    game.zoomTo(3);
+    final start = state.territories[game.mapComponent.graph.playerStartId];
+    final startPos = game.mapComponent.graph.positionOf(start.id).offset;
+    game.panBy(
+      (game.camera.localToGlobal(Vector2(startPos.dx, startPos.dy)) -
+              game.size / 2) *
+          -1,
     );
     await tester.pump();
-    final gesture = await tester.startGesture(screenOf(src));
-    await tester.pump(const Duration(milliseconds: 50));
-    for (var i = 1; i <= 10; i++) {
-      await gesture.moveTo(Offset.lerp(screenOf(src), screenOf(dst), i / 10)!);
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-    await gesture.up();
-    await tester.pump(const Duration(milliseconds: kMarchMs + 100));
+
+    // ── 4. Attack: select an own border tile, tap a free neighbour ────────
+    final (src, dst) = _border(state);
+    await tapTile(src);
+    expect(container.read(selectedTerritoryProvider), src);
+    await tapTile(dst);
     state = container.read(gameProvider);
     expect(state.territories[dst].ownerArmyId, ArmyId.army1);
-    expect(state.tilesOwnedBy(ArmyId.army1), 5);
-    await frames(20);
 
-    // ── 6. Fire Bomb card: tap the card, then a city ──────────────────────
-    final target = _bombable(state);
+    // ── 5. Fire Bomb card: 2 tiny tiles at once ───────────────────────────
+    final before = state.tilesOwnedBy(ArmyId.army1);
     await tester.tap(find.byKey(const Key('ability_fireBomb')));
     await tester.pump();
     expect(container.read(armedAbilityProvider), AbilityType.fireBomb);
-    await tapCity(target);
+    final (_, target) = _border(container.read(gameProvider));
+    await tapTile(target);
     state = container.read(gameProvider);
-    expect(state.territories[target].ownerArmyId, ArmyId.army1);
+    expect(state.tilesOwnedBy(ArmyId.army1), before + kFireBombTiles);
     expect(
       container.read(gameFeedbackProvider)?.kind,
       GameFeedbackKind.abilityUsed,
     );
-    await frames(20);
 
-    // ── 7. Bomber: the Uçak button, then a bot city ──────────────────────
-    final botCity = state.territories.firstWhere(
-      (t) => t.ownerArmyId == ArmyId.army2,
-    );
-    await tester.tap(find.byKey(const Key('btn_bomber')));
-    await tester.pump();
-    expect(container.read(armedToolProvider), const ArmedBomber());
-    game.camera.viewfinder.position = Vector2(
-      game.mapComponent.graph.getPosition(botCity.id).dx,
-      game.mapComponent.graph.getPosition(botCity.id).dy,
-    );
-    await tester.pump();
-    await tapCity(botCity.id);
-    await tester.pump(const Duration(milliseconds: kBomberFlightMs + 100));
-    state = container.read(gameProvider);
-    expect(
-      state.territories[botCity.id].unitCount,
-      botCity.unitCount - kBomberDamage,
-    );
-    expect(state.army1.bombersReady, kStartBombers - 1);
-    await frames(20);
+    // ── 6. Shop: cards cost diamonds ──────────────────────────────────────
+    await tester.tap(find.text('Silah Dükkanı'));
+    await frames();
+    expect(find.byKey(const Key('shop_item_fire_bomb')), findsOneWidget);
+    expect(find.byKey(const Key('shop_item_tribute')), findsOneWidget);
+    expect(find.textContaining('Maliyet: 220'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await frames();
 
-    // ── 8. Shop: buy a tank ───────────────────────────────────────────────
-    final notifier = container.read(gameProvider.notifier);
-    // ignore: invalid_use_of_protected_member
-    notifier.state = state.withArmy(state.army1.copyWith(diamondBalance: 300));
-    await tester.pump();
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('shop_tank')),
-      100,
-      scrollable: find.descendant(
-        of: find.byKey(const Key('weapon_shop')),
-        matching: find.byType(Scrollable),
-      ),
-    );
-    await tester.ensureVisible(find.byKey(const Key('shop_tank')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('shop_tank')));
-    await tester.pump();
-    expect(container.read(gameProvider).army1.tanks, kStartTanks + 1);
-
-    // ── 9. End the turn: the bots play, then it is our turn again ─────────
-    await tester.tap(find.byKey(const Key('btn_end_turn')));
+    // ── 7. End the turn: all three bots play, then it is our turn again ───
+    final diamonds = state.army1.diamondBalance;
+    await tester.tap(find.text('Turu Bitir'));
     await tester.pump();
     expect(container.read(gameProvider.notifier).isHumanTurn, isFalse);
     for (var i = 0; i < 600; i++) {
       if (container.read(gameProvider.notifier).isHumanTurn) break;
-      if (container.read(gameProvider).phase == GamePhase.victory) break;
       await tester.pump(const Duration(milliseconds: 200));
     }
     state = container.read(gameProvider);
-    expect(state.phase, GamePhase.playing);
     expect(state.activeArmyId, ArmyId.army1);
     expect(state.currentTurn, 2);
+    // Income was paid (a bot may have taken some with Haraç Kes).
+    expect(
+      state.army1.diamondBalance,
+      greaterThanOrEqualTo(diamonds + 80 - kTributeDiamonds * 3),
+    );
     expect(state.army1.hasDrawnCard, isFalse, reason: 'a new free card');
-    for (final bot in state.armies.skip(1)) {
-      expect(bot.hasDrawnCard, isFalse);
-    }
-    // The bots played: some of them grew (one may already be wiped out by
-    // the others).
+    // The bots played (and fought each other): some of them grew.
     expect(
       state.armies
           .skip(1)
-          .any((b) => state.tilesOwnedBy(b.id) > kBotStartCities),
+          .any((b) => state.tilesOwnedBy(b.id) > kStartTileCount),
       isTrue,
     );
     expect(repo.saved?.currentTurn, 2);
-    await frames(20);
 
-    // ── 10. Back to the menu and resume ───────────────────────────────────
+    // ── 8. Back to the menu and resume ────────────────────────────────────
     await tester.tap(find.byIcon(Icons.home_rounded));
     await frames();
     expect(find.byType(MainMenuScreen), findsOneWidget);
@@ -274,54 +248,20 @@ void main() {
     state = container.read(gameProvider);
     expect(state.currentTurn, 2);
     expect(state.armies, hasLength(4));
-
-    // ── 11. A two-player game: the phone passes to Oyuncu 2 ───────────────
-    await tester.tap(find.byIcon(Icons.home_rounded));
-    await frames();
-    await tester.tap(find.text('Yeni Oyun'));
-    await frames();
-    if (find.text('Atla').evaluate().isNotEmpty) {
-      await tester.tap(find.text('Atla'));
-      await frames();
-    }
-    await tester.tap(find.byKey(const Key('humans_2')));
-    await tester.tap(find.byKey(const Key('bots_2')));
-    await tester.pump();
-    await tester.ensureVisible(find.byKey(const Key('difficulty_medium')));
-    await tester.tap(find.byKey(const Key('difficulty_medium')));
-    await frames(10);
-    state = container.read(gameProvider);
-    expect(state.humanIds, [ArmyId.army1, ArmyId.army2]);
-    expect(find.text('Oyuncu 1'), findsWidgets);
-    await tester.tap(find.byKey(const Key('btn_end_turn')));
-    await tester.pump();
-    expect(container.read(gameProvider).activeArmyId, ArmyId.army2);
-    expect(find.textContaining('Oyuncu 2'), findsWidgets);
-    await frames(40);
   });
 }
 
-/// An own city with soldiers and a weaker neutral neighbour.
-(int, int) _attackable(GameState s) {
+/// An own tile with ≥ 2 units and a neighbour that is neither own nor
+/// another army's (free land), or any non-own neighbour as a fallback.
+(int, int) _border(GameState s) {
+  (int, int)? fallback;
   for (final t in s.territories) {
-    if (t.ownerArmyId != ArmyId.army1 || t.unitCount < 50) continue;
+    if (t.ownerArmyId != ArmyId.army1 || t.unitCount < 2) continue;
     for (final adj in t.adjacentIds) {
-      final n = s.territories[adj];
-      if (n.ownerArmyId == null && n.unitCount < 40) return (t.id, adj);
+      final o = s.territories[adj].ownerArmyId;
+      if (o == null) return (t.id, adj);
+      if (o != ArmyId.army1) fallback ??= (t.id, adj);
     }
   }
-  throw StateError('no attack found');
-}
-
-/// A neutral city next to the player's land that a Fire Bomb empties.
-int _bombable(GameState s) {
-  for (final t in s.territories) {
-    if (t.ownerArmyId != null || t.unitCount > kFireBombDamage) continue;
-    if (t.adjacentIds.any(
-      (a) => s.territories[a].ownerArmyId == ArmyId.army1,
-    )) {
-      return t.id;
-    }
-  }
-  throw StateError('no target found');
+  return fallback!;
 }

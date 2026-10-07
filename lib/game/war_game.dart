@@ -5,12 +5,11 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flame/components.dart';
-import 'package:flame/events.dart';
 import 'package:flame/game.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/game/components/map_component.dart';
-import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
+import 'package:harita/game/map_gesture_layer.dart';
 
 // ─── WarGame ─────────────────────────────────────────────────────────────────
 
@@ -19,8 +18,8 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 /// [WarGame] owns the Africa [MapComponent] and bridges the Flame rendering
 /// pipeline with the Riverpod state layer via the injected [WidgetRef].
 ///
-/// The camera opens zoomed in on the player's cities; players can pinch to
-/// zoom out to the whole continent and drag to pan ([SeaBackdrop]).
+/// The camera fits the whole continent into the widget; players can pinch
+/// to zoom in on the small tiles and drag to pan ([MapGestureLayer]).
 class WarGame extends FlameGame {
   WarGame({required this.ref});
 
@@ -53,27 +52,6 @@ class WarGame extends FlameGame {
     camera.viewfinder.anchor = Anchor.center;
     await world.addAll([SeaBackdrop(), mapComponent]);
     _applyCamera(recenter: true);
-    focusOnViewer();
-  }
-
-  /// Zoom used to show the player's own cities when a game opens.
-  static const double startZoom = 2.6;
-
-  /// Zooms in on the cities of the player whose turn it is (or who played
-  /// last), so their numbers can be read at once.
-  void focusOnViewer() {
-    final state = ref.read(gameProvider);
-    final mine = [
-      for (final t in state.territories)
-        if (t.ownerArmyId == state.viewerId)
-          mapComponent.graph.getPosition(t.id),
-    ];
-    if (mine.isEmpty) return;
-    final center = mine.reduce((a, b) => a + b) / mine.length.toDouble();
-    userZoom = startZoom;
-    _applyCamera();
-    camera.viewfinder.position = Vector2(center.dx, center.dy);
-    _clampPosition();
   }
 
   @override
@@ -104,6 +82,15 @@ class WarGame extends FlameGame {
     _applyCamera();
   }
 
+  /// Zooms to [newUserZoom] keeping the map point under [focal] (a position
+  /// on the game canvas, e.g. between two pinching fingers) where it is.
+  void zoomAt(double newUserZoom, Vector2 focal) {
+    final anchor = camera.globalToLocal(focal);
+    zoomTo(newUserZoom);
+    final moved = camera.localToGlobal(anchor);
+    panBy(focal - moved);
+  }
+
   /// Pans the camera by [screenDelta] pixels.
   void panBy(Vector2 screenDelta) {
     camera.viewfinder.position -= screenDelta / camera.viewfinder.zoom;
@@ -130,40 +117,12 @@ class WarGame extends FlameGame {
 
 // ─── SeaBackdrop ─────────────────────────────────────────────────────────────
 
-/// Large invisible hit area behind the map that receives pinch-zoom and
-/// drag-to-pan gestures anywhere on the canvas. The sea itself is the game's
+/// Holds the deep-ocean colour around Africa. The sea itself is the game's
 /// [WarGame.backgroundColor], which — unlike a huge painted rectangle — never
-/// spills over the HUD widgets around the canvas.
-class SeaBackdrop extends PositionComponent
-    with DragCallbacks, ScaleCallbacks, HasGameReference<WarGame> {
-  SeaBackdrop()
-    : super(
-        position: Vector2.all(-5000),
-        size: Vector2.all(10000),
-        priority: -1,
-      );
-
+/// spills over the HUD widgets around the canvas. Panning and zooming are
+/// handled by [MapGestureLayer] around the game widget.
+class SeaBackdrop extends Component {
   /// Deep-ocean colour around Africa (matches the satellite picture's
   /// open sea).
   static const Color seaColor = Color(0xFF061431);
-
-  double _zoomAtStart = 1;
-
-  @override
-  void onScaleStart(ScaleStartEvent event) {
-    super.onScaleStart(event);
-    _zoomAtStart = game.userZoom;
-  }
-
-  /// Two fingers zoom (and move); one finger is a drag and pans.
-  @override
-  void onScaleUpdate(ScaleUpdateEvent event) {
-    if (event.pointerCount < 2) return;
-    game
-      ..zoomTo(_zoomAtStart * event.scale)
-      ..panBy(event.focalPointDelta);
-  }
-
-  @override
-  void onDragUpdate(DragUpdateEvent event) => game.panBy(event.canvasDelta);
 }

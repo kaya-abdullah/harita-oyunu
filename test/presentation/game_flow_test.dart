@@ -1,6 +1,7 @@
-// Game-flow tests for GameNotifier: sending soldiers (with the march),
-// cards, Kart Çek, bombers, the shop, the bots' turns, two players on one
-// phone, victory and saving.
+// End-to-end game-flow tests for GameNotifier: initial state, player
+// actions, AI turn, cards (hand, Kart Çek, new cards), victory and
+// save/load wiring.
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +12,10 @@ import 'package:harita/domain/models/ai_difficulty.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
+import 'package:harita/domain/models/territory.dart';
 import 'package:harita/domain/services/economy_service.dart';
+import 'package:harita/infrastructure/map/territory_graph.dart';
+import 'package:harita/infrastructure/map/territory_graph_data.dart';
 import 'package:harita/infrastructure/persistence/hive_save_repository.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 
@@ -31,144 +35,231 @@ class _MemorySaveRepository implements SaveRepository {
   Future<void> saveGameState(GameState state) async => saved = state;
 }
 
-ProviderContainer _container(
-  _MemorySaveRepository repo, {
-  int bots = 3,
-  int humans = 1,
-  AiDifficulty difficulty = AiDifficulty.medium,
-}) {
+ProviderContainer _container(_MemorySaveRepository repo) {
   final c = ProviderContainer(
-    overrides: [
-      saveRepositoryProvider.overrideWithValue(repo),
-      gameRandomProvider.overrideWithValue(Random(5)),
-    ],
+    overrides: [saveRepositoryProvider.overrideWithValue(repo)],
   );
   addTearDown(c.dispose);
-  c
-      .read(newGameSettingsProvider.notifier)
-      .set(difficulty: difficulty, bots: bots, humans: humans);
   return c;
 }
 
-/// Pumps fake time until a human may act again (or the game is over).
-Future<void> _waitForBots(WidgetTester tester, ProviderContainer c) async {
-  for (var i = 0; i < 600; i++) {
-    if (c.read(gameProvider).phase == GamePhase.victory) return;
+/// Pumps fake time until the AI has handed control back (or game over).
+Future<void> _waitForAi(WidgetTester tester, ProviderContainer c) async {
+  for (var i = 0; i < 400; i++) {
+    final s = c.read(gameProvider);
+    if (s.phase == GamePhase.victory) return;
     if (c.read(gameProvider.notifier).isHumanTurn) return;
-    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 500));
   }
-  fail('the bots did not finish');
-}
-
-/// An own city with soldiers and a weaker neutral neighbour.
-(int, int) _attackable(GameState s, ArmyId me) {
-  for (final t in s.territories) {
-    if (t.ownerArmyId != me || t.unitCount < 50) continue;
-    for (final adj in t.adjacentIds) {
-      final n = s.territories[adj];
-      if (n.ownerArmyId == null && n.unitCount < 40) return (t.id, adj);
-    }
-  }
-  throw StateError('no attack found');
+  fail('AI turn did not finish');
 }
 
 void main() {
-  testWidgets('drag-attack: soldiers march first, then take the city', (
-    tester,
-  ) async {
-    final c = _container(_MemorySaveRepository());
-    final n = c.read(gameProvider.notifier);
-    final (src, dst) = _attackable(c.read(gameProvider), ArmyId.army1);
-    final tanks = c.read(gameProvider).army1.tanks;
-
-    final done = n.dispatchTroops(src, dst);
-    // Marching: an animation with a tank, nothing decided yet, no other
-    // action accepted.
-    final fx = c.read(battleFxProvider).single;
-    expect(fx.kind, BattleFxKind.march);
-    expect(fx.withTank, isTrue);
-    expect(n.isHumanTurn, isFalse);
-    expect(c.read(gameProvider).territories[dst].ownerArmyId, isNull);
-
-    await tester.pump(const Duration(milliseconds: kMarchMs));
-    await done;
-    final s = c.read(gameProvider);
-    expect(s.territories[dst].ownerArmyId, ArmyId.army1);
-    expect(s.territories[src].unitCount, 1);
-    expect(s.army1.tanks, tanks, reason: 'a winning tank survives');
-    expect(
-      c.read(gameFeedbackProvider)?.kind,
-      GameFeedbackKind.territoryConquered,
-    );
-    await tester.pump(const Duration(seconds: 2));
-    expect(c.read(battleFxProvider), isEmpty);
+  test('embedded map data matches the JSON asset', () {
+    final asset = File('assets/maps/territory_graph.json').readAsStringSync();
+    expect(kTerritoryGraphJson.trim(), asset.trim());
   });
 
-  testWidgets('tapping your city, then a neighbour, also attacks', (
+  test('initial state uses the Africa tile map graph', () {
+    final s = createInitialGameState();
+    final graph = TerritoryGraph.bundled();
+    expect(s.territories, hasLength(kTerritoryCount));
+    for (final t in s.territories) {
+      expect(t.adjacentIds, graph.getById(t.id).adjacentIds);
+      expect(t.type, graph.getById(t.id).type);
+    }
+    expect(s.currentTurn, 1);
+    expect(s.activeArmyId, ArmyId.army1);
+    expect(s.army1.cardCount(AbilityType.fireBomb), kStartFireBombs);
+    expect(s.army1.cardCount(AbilityType.bombardment), 0);
+    expect(
+      s.territories.where((t) => t.ownerArmyId == ArmyId.army1),
+      isNotEmpty,
+    );
+    expect(
+      s.territories.where((t) => t.ownerArmyId == ArmyId.army2),
+      isNotEmpty,
+    );
+    expect(s.difficulty, AiDifficulty.medium);
+  });
+
+  test('armies start at opposite ends of Africa with equal forces', () {
+    final s = createInitialGameState(difficulty: AiDifficulty.hard);
+    final graph = TerritoryGraph.bundled();
+    expect(s.difficulty, AiDifficulty.hard);
+    final blue = s.territories.where((t) => t.ownerArmyId == ArmyId.army1);
+    final red = s.territories.where((t) => t.ownerArmyId == ArmyId.army2);
+    expect(blue, hasLength(kStartTileCount));
+    expect(red, hasLength(kStartTileCount));
+    expect(blue.every((t) => t.unitCount == kStartUnitsPerTile), isTrue);
+    expect(red.every((t) => t.unitCount == kStartUnitsPerTile), isTrue);
+    // Each starts on its own base.
+    expect(s.territories[graph.playerStartId].ownerArmyId, ArmyId.army1);
+    expect(s.territories[graph.botStartId].ownerArmyId, ArmyId.army2);
+    expect(
+      s.territories[graph.playerStartId].type,
+      isNot(TerritoryType.normal),
+    );
+    // Player in the far north, bot in the far south.
+    final blueRows = blue.map((t) => graph.positionOf(t.id).row);
+    final redRows = red.map((t) => graph.positionOf(t.id).row);
+    expect(blueRows.reduce(max), lessThan(graph.rows ~/ 3));
+    expect(redRows.reduce(min), greaterThan(graph.rows * 2 ~/ 3));
+  });
+
+  testWidgets('player attacks via map taps, deploys, and AI plays its turn', (
     tester,
   ) async {
-    final c = _container(_MemorySaveRepository());
+    final repo = _MemorySaveRepository();
+    final c = _container(repo);
     final n = c.read(gameProvider.notifier);
-    final (src, dst) = _attackable(c.read(gameProvider), ArmyId.army1);
-    await n.onTerritoryTapped(src);
+
+    // Select an own border tile then tap a neutral neighbour → conquer.
+    final (src, dst) = _ownBorder(c.read(gameProvider), ArmyId.army1);
+    n.onTerritoryTapped(src);
     expect(c.read(selectedTerritoryProvider), src);
-    final done = n.onTerritoryTapped(dst);
-    await tester.pump(const Duration(milliseconds: kMarchMs));
-    await done;
+    n.onTerritoryTapped(dst);
     expect(c.read(gameProvider).territories[dst].ownerArmyId, ArmyId.army1);
-    await tester.pump(const Duration(seconds: 2));
-  });
+    expect(c.read(selectedTerritoryProvider), dst);
 
-  testWidgets('soldiers only go to neighbours', (tester) async {
-    final c = _container(_MemorySaveRepository());
-    final n = c.read(gameProvider.notifier);
+    // Tapping the selected territory again deploys the unit pool.
+    final pool = c.read(gameProvider).army1.totalUnitPool;
+    final before = c.read(gameProvider).territories[dst].unitCount;
+    n.onTerritoryTapped(dst);
+    expect(c.read(gameProvider).army1.totalUnitPool, 0);
+    expect(c.read(gameProvider).territories[dst].unitCount, before + pool);
+
+    final diamondsBefore = c.read(gameProvider).army1.diamondBalance;
+    final aiOwnedBefore = c
+        .read(gameProvider)
+        .territories
+        .where((t) => t.ownerArmyId == ArmyId.army2)
+        .length;
+
+    n.endTurn();
+    expect(n.isHumanTurn, isFalse);
+    // Human actions are rejected during the AI turn.
+    n.endTurn();
+    await _waitForAi(tester, c);
+
     final s = c.read(gameProvider);
-    final far = s.territories.firstWhere(
-      (t) =>
-          t.ownerArmyId == null && !s.territories[0].adjacentIds.contains(t.id),
+    expect(s.activeArmyId, ArmyId.army1);
+    expect(s.currentTurn, 2);
+    // 80 diamonds every turn (plus 250 / 150 for any mine captured).
+    expect(
+      s.army1.diamondBalance - diamondsBefore,
+      anyOf(
+        kDiamondsPerTurn,
+        kDiamondsPerTurn + kDiamondMineReward,
+        kDiamondsPerTurn + kGoldMineReward,
+      ),
     );
-    await n.dispatchTroops(0, far.id);
-    expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.invalidAttack);
-    expect(c.read(battleFxProvider), isEmpty);
+    final owned = s.territories
+        .where((t) => t.ownerArmyId == ArmyId.army1)
+        .length;
+    // Income is based on the tiles owned when the turn ended.
+    expect(
+      s.army1.totalUnitPool,
+      kSoldiersPerTurn + (kStartTileCount + 1) ~/ kTilesPerBonusSoldier,
+    );
+    expect(owned, greaterThanOrEqualTo(1));
+    expect(
+      s.territories.where((t) => t.ownerArmyId == ArmyId.army2).length,
+      greaterThan(aiOwnedBefore),
+    );
+    expect(repo.saved, isNotNull);
   });
 
-  test('Kart Çek once per turn, then play the card on a city', () {
+  testWidgets('cards: arm + tap plays one card from the hand', (tester) async {
     final c = _container(_MemorySaveRepository());
     final n = c.read(gameProvider.notifier);
-    n.drawCard();
-    expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.cardDrawn);
-    expect(c.read(gameProvider).army1.hasDrawnCard, isTrue);
-    n.drawCard();
-    expect(
-      c.read(gameFeedbackProvider)?.kind,
-      GameFeedbackKind.cardAlreadyDrawn,
-    );
 
-    // Play the Fire Bomb on a weak neutral neighbour: tap card, tap city.
-    final (_, dst) = _attackable(c.read(gameProvider), ArmyId.army1);
+    // A card not in hand → feedback, not armed.
+    n.armAbility(AbilityType.megaBomba);
+    expect(c.read(armedAbilityProvider), isNull);
+    expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.noCard);
+
     n.armAbility(AbilityType.fireBomb);
     expect(c.read(armedAbilityProvider), AbilityType.fireBomb);
-    n.onTerritoryTapped(dst);
-    final s = c.read(gameProvider);
-    expect(s.territories[dst].ownerArmyId, ArmyId.army1);
-    expect(s.army1.cardCount(AbilityType.fireBomb), lessThanOrEqualTo(1));
-    expect(c.read(armedAbilityProvider), isNull);
+    // A tile far away in enemy land is not a valid target: stays armed.
+    final enemyTile = c
+        .read(gameProvider)
+        .territories
+        .firstWhere((t) => t.ownerArmyId == ArmyId.army2);
+    n.onTerritoryTapped(enemyTile.id);
     expect(
-      c.read(battleFxProvider).map((f) => f.kind),
-      contains(BattleFxKind.blast),
+      c.read(gameFeedbackProvider)!.kind,
+      GameFeedbackKind.invalidAbilityTarget,
+    );
+    expect(c.read(armedAbilityProvider), AbilityType.fireBomb);
+    expect(
+      c.read(gameProvider).territories[enemyTile.id].ownerArmyId,
+      ArmyId.army2,
     );
 
-    // A card you do not hold cannot be armed.
-    n.armAbility(AbilityType.nuclearBomb);
-    if (s.army1.cardCount(AbilityType.nuclearBomb) == 0) {
-      expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.noCard);
-    }
+    // Fire Bomb on a bordering tile captures that tile and one more, and
+    // one Fire Bomb card is used up.
+    final ownedBefore = _count(c.read(gameProvider), ArmyId.army1);
+    final (_, target) = _ownBorder(c.read(gameProvider), ArmyId.army1);
+    n.onTerritoryTapped(target);
+    expect(c.read(gameProvider).territories[target].ownerArmyId, ArmyId.army1);
+    expect(
+      _count(c.read(gameProvider), ArmyId.army1),
+      ownedBefore + kFireBombTiles,
+    );
+    expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.abilityUsed);
+    expect(c.read(armedAbilityProvider), isNull);
+    expect(
+      c.read(gameProvider).army1.cardCount(AbilityType.fireBomb),
+      kStartFireBombs - 1,
+    );
+
+    // The second Fire Bomb can be played the same turn too.
+    n.armAbility(AbilityType.fireBomb);
+    final (_, second) = _ownBorder(c.read(gameProvider), ArmyId.army1);
+    n.onTerritoryTapped(second);
+    expect(c.read(gameProvider).territories[second].ownerArmyId, ArmyId.army1);
+    expect(c.read(gameProvider).army1.cardCount(AbilityType.fireBomb), 0);
+
+    // Out of Fire Bombs: buying one in the shop adds it to the hand.
+    n.armAbility(AbilityType.fireBomb);
+    expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.noCard);
+    final item = kWeaponCatalog.firstWhere(
+      (i) => i.card == AbilityType.fireBomb,
+    );
+    final st = c.read(gameProvider);
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    n.state = st.withArmy(st.army1.copyWith(diamondBalance: 1000));
+    expect(n.purchaseItem(item), isTrue);
+    expect(c.read(gameProvider).army1.cardCount(AbilityType.fireBomb), 1);
+    expect(c.read(gameProvider).army1.diamondBalance, 1000 - item.diamondCost);
   });
 
-  test('Atom bomb anywhere and Haraç Kes from a bot', () {
+  test('Kart Çek: one free card per turn, again after the turn', () {
+    final c = _container(_MemorySaveRepository());
+    final n = c.read(gameProvider.notifier);
+    final before = c.read(gameProvider).army1.cardTotal;
+    n.drawCard();
+    expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.cardDrawn);
+    final drawn = AbilityType.values[c.read(gameFeedbackProvider)!.value!];
+    expect(c.read(gameProvider).army1.cardTotal, before + 1);
+    expect(c.read(gameProvider).army1.cardCount(drawn), greaterThan(0));
+    n.drawCard();
+    expect(
+      c.read(gameFeedbackProvider)!.kind,
+      GameFeedbackKind.cardAlreadyDrawn,
+    );
+    expect(c.read(gameProvider).army1.cardTotal, before + 1);
+    final turn = c.read(turnServiceProvider);
+    final next = turn.endTurn(c.read(gameProvider));
+    expect(next.army1.hasDrawnCard, isFalse);
+  });
+
+  test('Atom Bomb hits anywhere; Haraç Kes takes 200 diamonds', () {
     final c = _container(_MemorySaveRepository());
     final n = c.read(gameProvider.notifier);
     var s = c.read(gameProvider);
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
     n.state = s
         .withArmy(
           s.army1.copyWith(
@@ -176,172 +267,326 @@ void main() {
           ),
         )
         .withArmy(s.army2.copyWith(diamondBalance: 500));
-    // Far away from the player: a city of bot 3 (weak enough for the bomb).
-    final far = n.state.territories.lastWhere(
-      (t) => t.ownerArmyId == ArmyId.army4,
-    );
-    n.state = n.state.copyWith(
-      territories: [
-        for (final t in n.state.territories)
-          t.id == far.id ? t.copyWith(unitCount: kAtomBombDamage) : t,
-      ],
-    );
+    // Deep in enemy land, far from the player.
+    final far = s.territories.lastWhere((t) => t.ownerArmyId == ArmyId.army2);
+    final ownedBefore = _count(c.read(gameProvider), ArmyId.army1);
     n.armAbility(AbilityType.atomBomb);
     n.onTerritoryTapped(far.id);
     s = c.read(gameProvider);
     expect(s.territories[far.id].ownerArmyId, ArmyId.army1);
-    expect(
-      c.read(battleFxProvider).map((f) => f.kind),
-      contains(BattleFxKind.nuke),
-    );
+    expect(_count(s, ArmyId.army1), ownedBefore + kAtomBombTiles);
 
-    final botCity = s.territories.firstWhere(
+    final mine = s.army1.diamondBalance;
+    final botTile = s.territories.firstWhere(
       (t) => t.ownerArmyId == ArmyId.army2,
     );
-    final mine = s.army1.diamondBalance;
     n.armAbility(AbilityType.tribute);
-    n.onTerritoryTapped(botCity.id);
+    n.onTerritoryTapped(botTile.id);
     s = c.read(gameProvider);
     expect(s.army1.diamondBalance, mine + kTributeDiamonds);
     expect(s.army2.diamondBalance, 500 - kTributeDiamonds);
-    expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.tributeTaken);
+    expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.tributeTaken);
+    expect(s.army1.cardTotal, 0);
   });
 
-  testWidgets('a bomber flies to any city and kills soldiers there', (
-    tester,
-  ) async {
+  test('purchase with insufficient diamonds is rejected', () {
     final c = _container(_MemorySaveRepository());
     final n = c.read(gameProvider.notifier);
-    final target = c
-        .read(gameProvider)
-        .territories
-        .firstWhere((t) => t.ownerArmyId == ArmyId.army3);
-    n.armBomber();
-    expect(c.read(armedToolProvider), const ArmedBomber());
-    final done = n.onTerritoryTapped(target.id);
-    expect(c.read(battleFxProvider).single.kind, BattleFxKind.bomber);
-    await tester.pump(const Duration(milliseconds: kBomberFlightMs));
-    await done;
-    final s = c.read(gameProvider);
+    final item = kWeaponCatalog.first;
+    expect(n.purchaseItem(item), isFalse);
     expect(
-      s.territories[target.id].unitCount,
-      target.unitCount - kBomberDamage,
-    );
-    expect(s.army1.bombersReady, kStartBombers - 1);
-    expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.bomberHit);
-    await tester.pump(const Duration(seconds: 2));
-  });
-
-  test('buying in the shop', () {
-    final c = _container(_MemorySaveRepository());
-    final n = c.read(gameProvider.notifier);
-    final bomber = kWeaponCatalog.firstWhere((i) => i.bombers > 0);
-    expect(n.purchaseItem(bomber), isFalse);
-    expect(
-      c.read(gameFeedbackProvider)?.kind,
+      c.read(gameFeedbackProvider)!.kind,
       GameFeedbackKind.insufficientDiamonds,
     );
-    n.state = n.state.withArmy(n.state.army1.copyWith(diamondBalance: 1000));
-    expect(n.purchaseItem(bomber), isTrue);
-    expect(c.read(gameProvider).army1.bombers, kStartBombers + 1);
-    final nuke = kWeaponCatalog.firstWhere(
-      (i) => i.card == AbilityType.megaBomba,
-    );
-    expect(n.purchaseItem(nuke), isTrue);
-    expect(c.read(gameProvider).army1.cardCount(AbilityType.megaBomba), 1);
   });
 
-  testWidgets('end turn: the bots play (and fight each other), then it is the '
-      'player again', (tester) async {
-    final repo = _MemorySaveRepository();
-    final c = _container(repo, bots: 6);
+  test('shop cards appear when their turn is reached', () {
+    final economy = const EconomyServiceImpl();
+    final army = createInitialGameState().army1;
+    List<AbilityType> sold(int turn) => [
+      for (final i in economy.getEligibleShopItems(army, turn)) i.card,
+    ];
+    expect(sold(1), [AbilityType.fireBomb, AbilityType.tribute]);
+    expect(sold(kTurnUnlockBombardment), contains(AbilityType.bombardment));
+    expect(sold(kTurnUnlockAtomBomb), contains(AbilityType.atomBomb));
+    expect(sold(kTurnUnlockNuclearBomb), contains(AbilityType.nuclearBomb));
+    expect(sold(kTurnUnlockMegaBomba).toSet(), AbilityType.values.toSet());
+  });
+
+  test('conquering the last territory declares victory immediately', () {
+    final c = _container(_MemorySaveRepository());
     final n = c.read(gameProvider.notifier);
-    final diamonds = c.read(gameProvider).army1.diamondBalance;
+    final s = createInitialGameState();
+    const last = 100;
+    final source = s.territories[last].adjacentIds.first;
+    // Army 1 owns everything except one tile (neutral, 0 units).
+    final territories = [
+      for (final t in s.territories)
+        t.id == last
+            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            : t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 5),
+    ];
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    n.state = s.copyWith(territories: territories);
+    n.declareAttack(source, last);
+    final after = c.read(gameProvider);
+    expect(after.phase, GamePhase.victory);
+    expect(after.winnerId, ArmyId.army1);
+
+    // No further actions are accepted.
+    n.endTurn();
+    expect(c.read(gameProvider).currentTurn, after.currentTurn);
+  });
+
+  test('eliminating every enemy territory is a victory', () {
+    final victory = c0().read(victoryServiceProvider);
+    final s = createInitialGameState();
+    final territories = [
+      for (final t in s.territories)
+        t.ownerArmyId == ArmyId.army2
+            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            : t,
+    ];
+    expect(
+      victory.checkVictory(s.copyWith(territories: territories)),
+      ArmyId.army1,
+    );
+  });
+
+  test('capturing a diamond mine by attack pays 250 diamonds', () {
+    final c = _container(_MemorySaveRepository());
+    final n = c.read(gameProvider.notifier);
+    final s = createInitialGameState();
+    final mine = s.territories.firstWhere((t) => t.hasDiamondMine);
+    final source = mine.adjacentIds.first;
+    final territories = [
+      for (final t in s.territories)
+        t.id == source
+            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 10)
+            : t.id == mine.id
+            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            : t,
+    ];
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    n.state = s.copyWith(territories: territories);
+    final before = c.read(gameProvider).army1.diamondBalance;
+    n.declareAttack(source, mine.id);
+    final after = c.read(gameProvider);
+    expect(after.territories[mine.id].ownerArmyId, ArmyId.army1);
+    expect(after.army1.diamondBalance, before + kDiamondMineReward);
+    expect(
+      c.read(gameFeedbackProvider)!.kind,
+      GameFeedbackKind.diamondMineCaptured,
+    );
+    expect(c.read(gameFeedbackProvider)!.value, kDiamondMineReward);
+
+    // Moving units onto an own mine pays nothing more.
+    n.declareAttack(mine.id, source);
+    expect(
+      c.read(gameProvider).army1.diamondBalance,
+      after.army1.diamondBalance,
+    );
+  });
+
+  test('capturing a base (gold mine) pays 150 diamonds', () {
+    final c = _container(_MemorySaveRepository());
+    final n = c.read(gameProvider.notifier);
+    final s = createInitialGameState();
+    final base = s.territories.firstWhere(
+      (t) => t.hasGoldMine && t.ownerArmyId == null,
+    );
+    final source = base.adjacentIds.first;
+    final territories = [
+      for (final t in s.territories)
+        t.id == source
+            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 10)
+            : t.id == base.id
+            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            : t,
+    ];
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    n.state = s.copyWith(territories: territories);
+    final before = c.read(gameProvider).army1.diamondBalance;
+    n.declareAttack(source, base.id);
+    final after = c.read(gameProvider);
+    expect(after.territories[base.id].ownerArmyId, ArmyId.army1);
+    expect(after.army1.diamondBalance, before + kGoldMineReward);
+    expect(
+      c.read(gameFeedbackProvider)!.kind,
+      GameFeedbackKind.goldMineCaptured,
+    );
+    expect(c.read(gameFeedbackProvider)!.value, kGoldMineReward);
+  });
+
+  test('every base is a gold mine; mines are never on bases', () {
+    final s = createInitialGameState();
+    for (final t in s.territories) {
+      expect(t.hasGoldMine, t.type != TerritoryType.normal);
+      expect(t.hasGoldMine && t.hasDiamondMine, isFalse);
+    }
+    expect(kGoldMineReward, 150);
+    expect(kGoldMineReward, lessThan(kDiamondMineReward));
+  });
+
+  test('every army earns 80 diamonds at the end of its turn', () {
+    final turn = c0().read(turnServiceProvider);
+    final s = createInitialGameState(botCount: 3);
+    final next = turn.endTurn(s);
+    expect(next.army1.diamondBalance, kStartDiamonds + kDiamondsPerTurn);
+    expect(next.army2.diamondBalance, kStartDiamonds);
+    expect(next.activeArmyId, ArmyId.army2);
+  });
+
+  test('turns go round all bots and skip eliminated ones', () {
+    final turn = c0().read(turnServiceProvider);
+    var s = createInitialGameState(botCount: 3);
+    // Bot 2 (army3) loses all its land.
+    s = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          t.ownerArmyId == ArmyId.army3
+              ? t.copyWith(ownerArmyId: null, unitCount: 0)
+              : t,
+      ],
+    );
+    final order = <ArmyId>[];
+    for (var i = 0; i < 6; i++) {
+      s = turn.endTurn(s);
+      order.add(s.activeArmyId);
+    }
+    expect(order, [
+      ArmyId.army2,
+      ArmyId.army4,
+      ArmyId.army1,
+      ArmyId.army2,
+      ArmyId.army4,
+      ArmyId.army1,
+    ]);
+    expect(s.currentTurn, 3);
+  });
+
+  test('victory: the last army standing wins; losing all land loses', () {
+    final victory = c0().read(victoryServiceProvider);
+    final s = createInitialGameState(botCount: 3);
+    expect(victory.checkVictory(s), isNull);
+
+    // Only one bot left besides the player: the game goes on.
+    final oneBotLeft = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          t.ownerArmyId == ArmyId.army2 || t.ownerArmyId == ArmyId.army3
+              ? t.copyWith(ownerArmyId: null, unitCount: 0)
+              : t,
+      ],
+    );
+    expect(victory.checkVictory(oneBotLeft), isNull);
+
+    // Every bot gone: the player wins.
+    final allBotsGone = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          t.ownerArmyId != ArmyId.army1
+              ? t.copyWith(ownerArmyId: null, unitCount: 0)
+              : t,
+      ],
+    );
+    expect(victory.checkVictory(allBotsGone), ArmyId.army1);
+
+    // The player gone: the bot with the most land wins.
+    var bigger = 0;
+    final playerGone = s.copyWith(
+      territories: [
+        for (final t in s.territories)
+          if (t.ownerArmyId == ArmyId.army1)
+            t.copyWith(ownerArmyId: null, unitCount: 0)
+          else if (t.ownerArmyId == null && bigger++ < 5)
+            t.copyWith(ownerArmyId: ArmyId.army4, unitCount: 1)
+          else
+            t,
+      ],
+    );
+    expect(victory.checkVictory(playerGone), ArmyId.army4);
+  });
+
+  testWidgets('with six bots every bot plays before the player again', (
+    tester,
+  ) async {
+    final repo = _MemorySaveRepository();
+    final c = _container(repo);
+    c.read(newGameBotCountProvider.notifier).set(kMaxBots);
+    final n = c.read(gameProvider.notifier);
+    final start = c.read(gameProvider);
+    expect(start.armies, hasLength(kMaxBots + 1));
+
     n.endTurn();
     expect(n.isHumanTurn, isFalse);
-    n.drawCard();
-    expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.notYourTurn);
-    await _waitForBots(tester, c);
+    await _waitForAi(tester, c);
+
     final s = c.read(gameProvider);
     expect(s.activeArmyId, ArmyId.army1);
     expect(s.currentTurn, 2);
-    expect(s.army1.diamondBalance, greaterThanOrEqualTo(diamonds + 80));
-    // Every bot drew its card and grew.
     for (final bot in s.armies.skip(1)) {
-      expect(s.tilesOwnedBy(bot.id), greaterThanOrEqualTo(kBotStartCities));
+      expect(
+        s.tilesOwnedBy(bot.id),
+        greaterThan(kStartTileCount),
+        reason: '${bot.id} should have expanded',
+      );
+      expect(bot.diamondBalance, greaterThanOrEqualTo(kStartDiamonds + 80));
     }
-    expect(repo.saved?.currentTurn, 2);
-    await tester.pump(const Duration(seconds: 2));
+    expect(repo.saved?.armies, hasLength(kMaxBots + 1));
   });
 
-  testWidgets('two players share the phone', (tester) async {
-    final c = _container(_MemorySaveRepository(), bots: 2, humans: 2);
-    final n = c.read(gameProvider.notifier);
-    var s = c.read(gameProvider);
-    expect(s.humanIds, [ArmyId.army1, ArmyId.army2]);
-    expect(c.read(viewerArmyProvider).id, ArmyId.army1);
-
-    n.endTurn();
-    // Player 2 plays straight after player 1 — no bot in between.
-    s = c.read(gameProvider);
-    expect(s.activeArmyId, ArmyId.army2);
-    expect(n.isHumanTurn, isTrue);
-    expect(c.read(viewerArmyProvider).id, ArmyId.army2);
-    final fb = c.read(gameFeedbackProvider);
-    expect(fb?.kind, GameFeedbackKind.nextPlayer);
-    expect(fb?.value, ArmyId.army2.index);
-
-    // Player 2 can attack with their own cities.
-    final (src, dst) = _attackable(s, ArmyId.army2);
-    final done = n.dispatchTroops(src, dst);
-    await tester.pump(const Duration(milliseconds: kMarchMs));
-    await done;
-    expect(c.read(gameProvider).territories[dst].ownerArmyId, ArmyId.army2);
-
-    n.endTurn();
-    await _waitForBots(tester, c);
-    s = c.read(gameProvider);
-    expect(s.activeArmyId, ArmyId.army1);
-    expect(c.read(gameFeedbackProvider)?.kind, GameFeedbackKind.nextPlayer);
-    await tester.pump(const Duration(seconds: 2));
-  });
-
-  test('conquering the last enemy city wins the game', () {
-    final c = _container(_MemorySaveRepository(), bots: 1);
-    final n = c.read(gameProvider.notifier);
-    final s = c.read(gameProvider);
-    // Leave the bot one city and give the player a card to take it.
-    final botCities = [
-      for (final t in s.territories)
-        if (t.ownerArmyId == ArmyId.army2) t.id,
-    ];
-    n.state = s
-        .copyWith(
-          territories: [
-            for (final t in s.territories)
-              t.id == botCities.last
-                  ? t.copyWith(unitCount: 5)
-                  : t.ownerArmyId == ArmyId.army2
-                  ? t.copyWith(ownerArmyId: null)
-                  : t,
-          ],
-        )
-        .withArmy(s.army1.copyWith(cards: {AbilityType.atomBomb: 1}));
-    n.activateAbility(AbilityType.atomBomb, botCities.last);
-    final end = c.read(gameProvider);
-    expect(end.phase, GamePhase.victory);
-    expect(end.winnerId, ArmyId.army1);
-  });
-
-  test('save and load', () async {
+  testWidgets('loading a save taken before the AI turn resumes the AI', (
+    tester,
+  ) async {
     final repo = _MemorySaveRepository();
-    final c = _container(repo, humans: 2);
+    final c = _container(repo);
+    final turn = c.read(turnServiceProvider);
+    repo.saved = turn.endTurn(createInitialGameState()); // army2 to play
     final n = c.read(gameProvider.notifier);
-    n.drawCard();
-    await n.saveGame();
-    final saved = c.read(gameProvider);
-    n.state = createInitialGameState();
     expect(await n.loadGame(), isTrue);
-    expect(c.read(gameProvider), saved);
+    await _waitForAi(tester, c);
+    expect(c.read(gameProvider).activeArmyId, ArmyId.army1);
+    expect(c.read(gameProvider).currentTurn, 2);
   });
+
+  testWidgets(
+    'a passive player is eventually defeated by the AI',
+    (tester) async {
+      final c = _container(_MemorySaveRepository());
+      final n = c.read(gameProvider.notifier);
+      for (var i = 0; i < 300; i++) {
+        if (c.read(gameProvider).phase == GamePhase.victory) break;
+        n.endTurn();
+        await _waitForAi(tester, c);
+      }
+      await tester.pump(const Duration(seconds: 2));
+      final s = c.read(gameProvider);
+      expect(s.phase, GamePhase.victory);
+      expect(s.winnerId, ArmyId.army2);
+      // ignore: avoid_print
+      print('AI won on turn ${s.currentTurn}');
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+}
+
+/// An own tile of [army] with ≥ 2 units and one of its non-own neighbours.
+(int, int) _ownBorder(GameState s, ArmyId army) {
+  for (final t in s.territories) {
+    if (t.ownerArmyId != army || t.unitCount < 2) continue;
+    for (final adj in t.adjacentIds) {
+      if (s.territories[adj].ownerArmyId != army) return (t.id, adj);
+    }
+  }
+  throw StateError('no border tile');
+}
+
+int _count(GameState s, ArmyId army) =>
+    s.territories.where((t) => t.ownerArmyId == army).length;
+
+ProviderContainer c0() {
+  final c = ProviderContainer();
+  addTearDown(c.dispose);
+  return c;
 }

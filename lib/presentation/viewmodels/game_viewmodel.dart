@@ -4,9 +4,9 @@
 /// the domain services together and expose reactive game state to the UI.
 library;
 
-import 'dart:math';
+import 'dart:collection';
+import 'dart:math' show min;
 
-import 'package:flutter/painting.dart' show Offset;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/constants.dart';
@@ -14,6 +14,7 @@ import 'package:harita/domain/models/ai_difficulty.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
+import 'package:harita/domain/models/territory.dart';
 import 'package:harita/domain/models/weapon_item.dart';
 import 'package:harita/domain/services/ability_service.dart';
 import 'package:harita/domain/services/combat_service.dart';
@@ -46,7 +47,7 @@ final victoryServiceProvider = Provider<VictoryService>(
   (ref) => const VictoryServiceImpl(),
 );
 
-/// Provides the [TurnService] singleton.
+/// Provides the [TurnService] singleton, wired with its dependencies.
 final turnServiceProvider = Provider<TurnService>(
   (ref) => TurnServiceImpl(
     economyService: ref.watch(economyServiceProvider),
@@ -68,190 +69,84 @@ final saveRepositoryProvider = Provider<SaveRepository>(
   (ref) => HiveSaveRepository(),
 );
 
-/// Random numbers for a new game's soldiers; tests fix the seed.
-final gameRandomProvider = Provider<Random?>((ref) => null);
+// ─── New-game difficulty provider ────────────────────────────────────────────
 
-/// Waits [ms] milliseconds; tests can replace it to skip animations.
-final animationDelayProvider = Provider<Future<void> Function(int ms)>(
-  (ref) =>
-      (ms) => Future<void>.delayed(Duration(milliseconds: ms)),
-);
-
-// ─── New-game settings ───────────────────────────────────────────────────────
-
-/// The choices made in the New Game dialog.
-typedef NewGameSettings = ({AiDifficulty difficulty, int bots, int humans});
-
-/// Holds the settings for the next new game.
-class NewGameSettingsNotifier extends Notifier<NewGameSettings> {
+/// Holds the bot difficulty chosen in the main menu for the next new game.
+class NewGameDifficultyNotifier extends Notifier<AiDifficulty> {
   @override
-  NewGameSettings build() =>
-      (difficulty: AiDifficulty.medium, bots: 5, humans: 1);
+  AiDifficulty build() => AiDifficulty.medium;
 
-  /// Sets the settings used by the next [GameNotifier.build].
-  void set({AiDifficulty? difficulty, int? bots, int? humans}) => state = (
-    difficulty: difficulty ?? state.difficulty,
-    bots: (bots ?? state.bots).clamp(1, kMaxBots).toInt(),
-    humans: (humans ?? state.humans).clamp(1, kMaxHumans).toInt(),
-  );
+  /// Sets the difficulty used by the next [GameNotifier.build].
+  void set(AiDifficulty difficulty) => state = difficulty;
 }
 
-/// Provides the settings for the next new game.
-final newGameSettingsProvider =
-    NotifierProvider<NewGameSettingsNotifier, NewGameSettings>(
-      NewGameSettingsNotifier.new,
+/// Provides the difficulty for the next new game.
+final newGameDifficultyProvider =
+    NotifierProvider<NewGameDifficultyNotifier, AiDifficulty>(
+      NewGameDifficultyNotifier.new,
     );
 
-// ─── Selection and armed tools ──────────────────────────────────────────────
+/// Holds how many bots (1 … [kMaxBots]) join the next new game.
+class NewGameBotCountNotifier extends Notifier<int> {
+  @override
+  int build() => 1;
 
-/// Holds the currently selected city id (`null` when nothing is selected).
+  /// Sets the bot count used by the next [GameNotifier.build].
+  void set(int count) => state = count.clamp(1, kMaxBots);
+}
+
+/// Provides the number of bots for the next new game.
+final newGameBotCountProvider = NotifierProvider<NewGameBotCountNotifier, int>(
+  NewGameBotCountNotifier.new,
+);
+
+// ─── Selected territory provider ─────────────────────────────────────────────
+
+/// Minimal [Notifier] that holds the currently-selected territory id (`null`
+/// when nothing is selected).
+///
+/// Kept separate from [gameProvider] so territory tap events do not force
+/// full game-state rebuilds in unrelated widgets.
 class SelectedTerritoryNotifier extends Notifier<int?> {
   @override
   int? build() => null;
 
-  /// Sets the selected city to [id].
+  /// Sets the selected territory to [id].
   void select(int? id) => state = id;
 }
 
-/// Provides the currently selected city id, or `null` if none.
+/// Provides the currently selected territory id, or `null` if none.
 final selectedTerritoryProvider =
     NotifierProvider<SelectedTerritoryNotifier, int?>(
       SelectedTerritoryNotifier.new,
     );
 
-/// What the next tap on the map does, besides selecting and attacking:
-/// play a card or send a bomber.
-sealed class ArmedTool {
-  const ArmedTool();
-}
+// ─── Armed ability provider ──────────────────────────────────────────────────
 
-/// A card is armed: tap a city to play it there.
-final class ArmedCard extends ArmedTool {
-  const ArmedCard(this.type);
-
-  /// The card to play.
-  final AbilityType type;
-
+/// Holds the ability the human player has "armed" (tapped in the ability
+/// panel) and that will be fired at the next territory tapped on the map.
+/// `null` when no ability is armed.
+class ArmedAbilityNotifier extends Notifier<AbilityType?> {
   @override
-  bool operator ==(Object other) => other is ArmedCard && other.type == type;
+  AbilityType? build() => null;
 
-  @override
-  int get hashCode => type.hashCode;
+  /// Sets (or clears, with `null`) the armed ability.
+  void set(AbilityType? type) => state = type;
 }
 
-/// A bomber is armed: tap a city to bomb it.
-final class ArmedBomber extends ArmedTool {
-  const ArmedBomber();
-
-  @override
-  bool operator ==(Object other) => other is ArmedBomber;
-
-  @override
-  int get hashCode => 1;
-}
-
-/// Holds the armed tool, or `null`.
-class ArmedToolNotifier extends Notifier<ArmedTool?> {
-  @override
-  ArmedTool? build() => null;
-
-  /// Sets (or clears, with `null`) the armed tool.
-  void set(ArmedTool? tool) => state = tool;
-}
-
-/// Provides the armed tool, or `null`.
-final armedToolProvider = NotifierProvider<ArmedToolNotifier, ArmedTool?>(
-  ArmedToolNotifier.new,
-);
-
-/// The armed card, or `null` (convenience view of [armedToolProvider]).
-final armedAbilityProvider = Provider<AbilityType?>((ref) {
-  final tool = ref.watch(armedToolProvider);
-  return tool is ArmedCard ? tool.type : null;
-});
-
-// ─── Battle effects (animations) ─────────────────────────────────────────────
-
-/// Kinds of animation drawn on the map.
-enum BattleFxKind {
-  /// Soldiers (and a tank) marching from one city to another.
-  march,
-
-  /// A bomber flying to a city and bombing it.
-  bomber,
-
-  /// An explosion on a city (cards).
-  blast,
-
-  /// A big mushroom-cloud blast (Atom / Nuclear bomb).
-  nuke,
-}
-
-/// One animation on the map.
-class BattleFx {
-  BattleFx({
-    required this.kind,
-    required this.from,
-    required this.to,
-    required this.army,
-    required this.durationMs,
-    this.withTank = false,
-  });
-
-  /// What is shown.
-  final BattleFxKind kind;
-
-  /// Start point (world coordinates).
-  final Offset from;
-
-  /// End point (world coordinates).
-  final Offset to;
-
-  /// Whose units move.
-  final ArmyId army;
-
-  /// How long it lasts.
-  final int durationMs;
-
-  /// Whether a tank rolls along with the soldiers.
-  final bool withTank;
-}
-
-/// Holds the animations currently playing.
-class BattleFxNotifier extends Notifier<List<BattleFx>> {
-  @override
-  List<BattleFx> build() => const [];
-
-  /// Starts [fx]; it is removed again once its time is up.
-  void add(BattleFx fx) {
-    state = [...state, fx];
-    Future<void>.delayed(Duration(milliseconds: fx.durationMs + 200), () {
-      if (ref.mounted) state = [...state]..remove(fx);
-    });
-  }
-}
-
-/// Provides the animations currently playing.
-final battleFxProvider = NotifierProvider<BattleFxNotifier, List<BattleFx>>(
-  BattleFxNotifier.new,
-);
+/// Provides the currently armed ability, or `null`.
+final armedAbilityProvider =
+    NotifierProvider<ArmedAbilityNotifier, AbilityType?>(
+      ArmedAbilityNotifier.new,
+    );
 
 // ─── Feedback provider ───────────────────────────────────────────────────────
 
 /// Kinds of user feedback produced by player actions. The UI maps each kind
-/// to a localized message.
+/// to a localized message (Requirements 4.4, 6.8).
 enum GameFeedbackKind {
   /// No such card in hand.
   noCard,
-
-  /// The card cannot be used on the tapped city.
-  invalidAbilityTarget,
-
-  /// A card was armed; tap a city to use it.
-  abilityArmed,
-
-  /// A card was played.
-  abilityUsed,
 
   /// The free card was drawn; [GameFeedback.value] is the card's index in
   /// [AbilityType.values].
@@ -260,55 +155,49 @@ enum GameFeedbackKind {
   /// The free card of this turn was already drawn.
   cardAlreadyDrawn,
 
-  /// A bomber was armed; tap a city to bomb.
-  bomberArmed,
-
-  /// A bomber bombed a city; [GameFeedback.value] is the soldiers lost.
-  bomberHit,
-
-  /// No bomber is ready this turn.
-  noBomber,
-
-  /// The bomber cannot bomb that city.
-  invalidBomberTarget,
-
-  /// The Saldır button: how to attack.
-  attackHint,
-
-  /// Attack/move is not possible (not adjacent, too few soldiers).
-  invalidAttack,
-
-  /// A city was conquered.
-  territoryConquered,
-
-  /// A diamond mine was captured; [GameFeedback.value] holds the diamonds.
-  diamondMineCaptured,
-
-  /// A gold mine was captured; [GameFeedback.value] holds the diamonds.
-  goldMineCaptured,
-
-  /// Attack failed; defender held. [GameFeedback.value] is 1 when the tank
-  /// was lost.
-  attackRepelled,
-
-  /// Soldiers moved between own cities.
-  unitsMoved,
-
   /// Haraç Kes took [GameFeedback.value] diamonds.
   tributeTaken,
 
-  /// Action attempted while it is not a human player's turn.
+  /// Ability cannot be used on the tapped territory.
+  invalidAbilityTarget,
+
+  /// Ability was armed; tap a territory to use it.
+  abilityArmed,
+
+  /// Ability was used successfully.
+  abilityUsed,
+
+  /// Attack/move is not possible (not adjacent, too few units, base full).
+  invalidAttack,
+
+  /// Territory was conquered.
+  territoryConquered,
+
+  /// A diamond mine was captured; [GameFeedback.value] holds the diamonds
+  /// earned.
+  diamondMineCaptured,
+
+  /// A gold mine (base) was captured; [GameFeedback.value] holds the
+  /// diamonds earned.
+  goldMineCaptured,
+
+  /// Attack failed; defender held.
+  attackRepelled,
+
+  /// Units moved between own territories.
+  unitsMoved,
+
+  /// Reinforcements deployed; [GameFeedback.value] holds the amount.
+  unitsDeployed,
+
+  /// Nothing to deploy / base full.
+  cannotDeploy,
+
+  /// Action attempted while it is not the human player's turn.
   notYourTurn,
 
   /// Not enough diamonds for a purchase.
   insufficientDiamonds,
-
-  /// Something was bought.
-  purchased,
-
-  /// The phone passes to the next human player; [GameFeedback.value] is
-  /// the [ArmyId.index] of that player.
-  nextPlayer,
 }
 
 /// A single feedback event. A new instance is emitted for every event so
@@ -319,7 +208,7 @@ class GameFeedback {
   /// What happened.
   final GameFeedbackKind kind;
 
-  /// Optional number associated with the event.
+  /// Optional number associated with the event (turn, count, …).
   final int? value;
 }
 
@@ -340,13 +229,15 @@ final gameFeedbackProvider =
 
 // ─── GameNotifier ─────────────────────────────────────────────────────────────
 
-/// Central [Notifier] that owns the [GameState] and exposes every action a
-/// human player can take: drag soldiers to a city, play a card, send a
-/// bomber, draw a card, buy weapons, end the turn, save and load.
+/// Central [Notifier] that owns the mutable [GameState] and exposes all
+/// player-facing actions (attack, ability use, shop, deploy, end turn,
+/// save/load).
 ///
-/// All actions are refused while bots play, while an animation runs and
-/// once the game is over. After a human ends the turn the bots that follow
-/// play automatically.
+/// All action methods guard against [GamePhase.victory] and against being
+/// called while it is not the human player's turn (e.g. during the AI turn).
+///
+/// When [endTurn] results in the AI army becoming active, the
+/// [GreedyAiAgent] is invoked automatically to execute the AI's turn.
 class GameNotifier extends Notifier<GameState> {
   // ─── Lazily resolved service references ──────────────────────────────────
 
@@ -359,45 +250,31 @@ class GameNotifier extends Notifier<GameState> {
   GreedyAiAgent get _ai => ref.read(aiAgentProvider);
 
   bool _aiRunning = false;
-  bool _busy = false;
-
-  TerritoryGraph get _graph => TerritoryGraph.bundled();
 
   // ─── build ────────────────────────────────────────────────────────────────
 
   @override
   GameState build() {
     _aiRunning = false;
-    _busy = false;
-    final settings = ref.read(newGameSettingsProvider);
     return createInitialGameState(
-      difficulty: settings.difficulty,
-      botCount: settings.bots,
-      humanCount: settings.humans,
-      random: ref.read(gameRandomProvider),
+      difficulty: ref.read(newGameDifficultyProvider),
+      botCount: ref.read(newGameBotCountProvider),
     );
   }
 
   // ─── Queries ──────────────────────────────────────────────────────────────
 
-  /// `true` when a human player may act right now.
+  /// `true` when the human player may act right now.
   bool get isHumanTurn =>
       state.phase == GamePhase.playing &&
-      state.activeArmy.isHuman &&
-      !_aiRunning &&
-      !_busy;
+      state.activeArmy.kind == ArmyKind.human &&
+      !_aiRunning;
 
   /// `true` while a bot is taking its turn.
-  bool get isAiTurn => _aiRunning || !state.activeArmy.isHuman;
+  bool get isAiTurn => _aiRunning || state.activeArmy.kind == ArmyKind.ai;
 
   void _feedback(GameFeedbackKind kind, [int? value]) =>
       ref.read(gameFeedbackProvider.notifier).emit(GameFeedback(kind, value));
-
-  void _fx(BattleFx fx) => ref.read(battleFxProvider.notifier).add(fx);
-
-  Future<void> _wait(int ms) => ref.read(animationDelayProvider)(ms);
-
-  Offset _pos(int id) => _graph.getPosition(id);
 
   /// Applies [next] and promotes the phase to victory if a winner exists.
   void _commit(GameState next) {
@@ -407,12 +284,12 @@ class GameNotifier extends Notifier<GameState> {
     }
     state = next;
     if (state.phase == GamePhase.victory) {
-      ref.read(armedToolProvider.notifier).set(null);
+      ref.read(armedAbilityProvider.notifier).set(null);
       _onGameOver();
     }
   }
 
-  /// A finished game should not be offered for resuming.
+  /// A finished game should not be offered for resuming (Requirement 12.2).
   Future<void> _onGameOver() async {
     try {
       await _save.deleteSave();
@@ -421,167 +298,163 @@ class GameNotifier extends Notifier<GameState> {
     }
   }
 
-  bool _guardTurn() {
-    if (state.phase == GamePhase.victory) return false;
-    if (!isHumanTurn) {
-      if (!_busy) _feedback(GameFeedbackKind.notYourTurn);
-      return false;
-    }
-    return true;
-  }
+  // ─── selectTerritory ─────────────────────────────────────────────────────
 
-  // ─── Selection ───────────────────────────────────────────────────────────
-
-  /// Records [id] as the selected city.
+  /// Records [id] as the currently selected territory in
+  /// [selectedTerritoryProvider].
+  ///
+  /// Guards against victory state so taps during the end screen are ignored.
   void selectTerritory(int? id) {
     if (state.phase == GamePhase.victory) return;
     ref.read(selectedTerritoryProvider.notifier).select(id);
   }
 
-  /// Handles a tap on city [id]:
+  // ─── onTerritoryTapped ───────────────────────────────────────────────────
+
+  /// Handles a tap on territory [id] on the map:
   ///
-  /// 1. An armed card or bomber is used on [id].
-  /// 2. With one of the player's cities selected, a neighbouring [id] is
-  ///    attacked (or reinforced when it is the player's own).
-  /// 3. Otherwise [id] is selected.
-  Future<void> onTerritoryTapped(int id) async {
+  /// 1. If an ability is armed, fires it at [id].
+  /// 2. If one of the player's territories is selected and [id] is adjacent
+  ///    to it, attacks [id] (or moves units if [id] is the player's own).
+  /// 3. Tapping the selected own territory again deploys reinforcements
+  ///    from the unit pool onto it.
+  /// 4. Otherwise selects [id].
+  void onTerritoryTapped(int id) {
     if (state.phase == GamePhase.victory) return;
 
-    final armed = ref.read(armedToolProvider);
+    final armed = ref.read(armedAbilityProvider);
     if (armed != null && isHumanTurn) {
-      switch (armed) {
-        case ArmedCard(:final type):
-          activateAbility(type, id);
-        case ArmedBomber():
-          await sendBomber(id);
-      }
+      activateAbility(armed, id);
       return;
     }
 
     final selectedId = ref.read(selectedTerritoryProvider);
-    if (isHumanTurn && selectedId != null && selectedId != id) {
-      final source = state.territories[selectedId];
-      if (source.ownerArmyId == state.activeArmyId &&
-          source.adjacentIds.contains(id)) {
-        await dispatchTroops(selectedId, id);
-        return;
+    if (isHumanTurn && selectedId != null) {
+      final source = _territory(selectedId);
+      if (source != null && source.ownerArmyId == state.activeArmyId) {
+        if (selectedId == id) {
+          deployReinforcements(id);
+          return;
+        }
+        if (source.adjacentIds.contains(id)) {
+          declareAttack(selectedId, id);
+          return;
+        }
       }
     }
+
     selectTerritory(id);
   }
 
-  // ─── Attack: drag soldiers from a city to another ────────────────────────
-
-  /// Whether the active human may send soldiers from [sourceId] to
-  /// [targetId] right now.
-  bool canDispatch(int sourceId, int targetId) {
-    if (!isHumanTurn || sourceId == targetId) return false;
-    final source = state.territories[sourceId];
-    return source.ownerArmyId == state.activeArmyId &&
-        source.unitCount >= 2 &&
-        source.adjacentIds.contains(targetId);
+  Territory? _territory(int id) {
+    for (final t in state.territories) {
+      if (t.id == id) return t;
+    }
+    return null;
   }
 
-  /// Sends all but one soldier (and a tank) from [sourceId] to [targetId]:
-  /// they march there and then fight — or just move in when [targetId] is
-  /// the player's own city.
-  Future<void> dispatchTroops(int sourceId, int targetId) async {
-    if (!_guardTurn()) return;
-    if (!canDispatch(sourceId, targetId)) {
-      _feedback(GameFeedbackKind.invalidAttack);
+  // ─── declareAttack ───────────────────────────────────────────────────────
+
+  /// Resolves an attack from [sourceId] into [targetId] (or a unit move when
+  /// [targetId] is already owned by the active army).
+  void declareAttack(int sourceId, int targetId) {
+    if (state.phase == GamePhase.victory) return;
+    if (!isHumanTurn) {
+      _feedback(GameFeedbackKind.notYourTurn);
       return;
     }
-    final me = state.activeArmyId;
-    final own = state.territories[targetId].ownerArmyId == me;
-    final tank = !own && state.activeArmy.tanksReady > 0;
-    ref.read(armedToolProvider.notifier).set(null);
-
-    _busy = true;
+    final targetBefore = _territory(targetId);
+    final wasOwn = targetBefore?.ownerArmyId == state.activeArmyId;
+    final before = state;
     try {
-      _fx(
-        BattleFx(
-          kind: BattleFxKind.march,
-          from: _pos(sourceId),
-          to: _pos(targetId),
-          army: me,
-          durationMs: kMarchMs,
-          withTank: tank,
-        ),
+      final next = _combat.resolveAttack(
+        state: state,
+        attackingArmyId: state.activeArmyId,
+        sourceTerritoryId: sourceId,
+        targetTerritoryId: targetId,
       );
-      await _wait(kMarchMs);
-      if (!ref.mounted) return;
-
-      final before = state;
-      final GameState next;
-      try {
-        next = _combat.resolveAttack(
-          state: state,
-          attackingArmyId: me,
-          sourceTerritoryId: sourceId,
-          targetTerritoryId: targetId,
-        );
-      } on InvalidAttackException {
-        _feedback(GameFeedbackKind.invalidAttack);
-        return;
-      }
+      final attacker = state.activeArmyId;
       _commit(next);
-      final won = state.territories[targetId].ownerArmyId == me;
-      if (own) {
+      final targetAfter = _territory(targetId);
+      if (wasOwn) {
         _feedback(GameFeedbackKind.unitsMoved);
-      } else if (won) {
-        if (!_mineFeedback(before, me)) {
+      } else if (targetAfter?.ownerArmyId == attacker) {
+        if (!_mineFeedback(before, attacker)) {
           _feedback(GameFeedbackKind.territoryConquered);
         }
       } else {
-        final tankLost = state.army(me).tanks < before.army(me).tanks;
-        _feedback(GameFeedbackKind.attackRepelled, tankLost ? 1 : 0);
+        _feedback(GameFeedbackKind.attackRepelled);
       }
-      selectTerritory(won ? targetId : sourceId);
-    } finally {
-      _busy = false;
+      // Keep the selection on the territory that now holds the army so the
+      // player can keep advancing.
+      selectTerritory(
+        targetAfter?.ownerArmyId == attacker ? targetId : sourceId,
+      );
+    } on InvalidAttackException {
+      _feedback(GameFeedbackKind.invalidAttack);
     }
   }
 
-  /// The Saldır button: explains how to attack.
-  void showAttackHint() {
-    ref.read(armedToolProvider.notifier).set(null);
-    _feedback(GameFeedbackKind.attackHint);
-  }
+  // ─── Abilities ───────────────────────────────────────────────────────────
 
-  // ─── Cards ───────────────────────────────────────────────────────────────
-
-  /// Arms [type] so the next map tap plays it (or disarms when it is armed
-  /// already or `null`).
+  /// Arms [type] so the next map tap fires it (or disarms when [type] is
+  /// already armed or `null`). Emits locked/cooldown feedback instead of
+  /// arming when the ability cannot be used (Requirement 6.8).
   void armAbility(AbilityType? type) {
     if (state.phase == GamePhase.victory) return;
-    final armed = ref.read(armedToolProvider.notifier);
-    if (type == null || ref.read(armedToolProvider) == ArmedCard(type)) {
-      armed.set(null);
+    final armedNotifier = ref.read(armedAbilityProvider.notifier);
+    if (type == null || ref.read(armedAbilityProvider) == type) {
+      armedNotifier.set(null);
       return;
     }
-    if (!_guardTurn()) return;
+    if (!isHumanTurn) {
+      _feedback(GameFeedbackKind.notYourTurn);
+      return;
+    }
     if (state.activeArmy.cardCount(type) <= 0) {
       _feedback(GameFeedbackKind.noCard);
       return;
     }
-    armed.set(ArmedCard(type));
+    armedNotifier.set(type);
     _feedback(GameFeedbackKind.abilityArmed);
   }
 
-  /// Plays [type] of the active army on [targetId].
+  /// Draws the free card of this turn ("Kart Çek") for the player.
+  void drawCard() {
+    if (state.phase == GamePhase.victory) return;
+    if (!isHumanTurn) {
+      _feedback(GameFeedbackKind.notYourTurn);
+      return;
+    }
+    try {
+      final (next, card) = _ability.drawCard(state, state.activeArmyId);
+      state = next;
+      _feedback(GameFeedbackKind.cardDrawn, card.index);
+    } on CardAlreadyDrawnException {
+      _feedback(GameFeedbackKind.cardAlreadyDrawn);
+    }
+  }
+
+  /// Activates [type] for the active army targeting [targetId].
+  ///
+  /// Emits [GameFeedback] describing failures (no such card, invalid
+  /// target).
   void activateAbility(AbilityType type, int targetId) {
-    if (!_guardTurn()) return;
+    if (state.phase == GamePhase.victory) return;
+    if (!isHumanTurn) {
+      _feedback(GameFeedbackKind.notYourTurn);
+      return;
+    }
     final before = state;
-    final me = state.activeArmyId;
     try {
       final next = _ability.activateAbility(
         state: state,
-        armyId: me,
+        armyId: state.activeArmyId,
         ability: type,
         targetTerritoryId: targetId,
       );
-      ref.read(armedToolProvider.notifier).set(null);
-      _cardFx(type, me, targetId, before, next);
+      ref.read(armedAbilityProvider.notifier).set(null);
+      final me = before.activeArmyId;
       _commit(next);
       if (type == AbilityType.tribute) {
         _feedback(
@@ -589,57 +462,17 @@ class GameNotifier extends Notifier<GameState> {
           state.army(me).diamondBalance - before.army(me).diamondBalance,
         );
       } else {
-        _feedback(GameFeedbackKind.abilityUsed, type.index);
+        _feedback(GameFeedbackKind.abilityUsed);
         _mineFeedback(before, me);
       }
     } on NoCardException {
-      ref.read(armedToolProvider.notifier).set(null);
+      ref.read(armedAbilityProvider.notifier).set(null);
       _feedback(GameFeedbackKind.noCard);
     } on InvalidTargetException {
-      // Keep the card armed so the player can pick a valid target.
+      // Keep the ability armed so the player can pick a valid target.
       _feedback(GameFeedbackKind.invalidAbilityTarget);
-    }
-  }
-
-  void _cardFx(
-    AbilityType type,
-    ArmyId army,
-    int targetId,
-    GameState before,
-    GameState after,
-  ) {
-    final big = type == AbilityType.atomBomb || type == AbilityType.nuclearBomb;
-    final hit = type.captures
-        ? captureArea(
-            before.territories,
-            army,
-            targetId,
-            kAbilityCaptureTiles[type]!,
-          )
-        : [targetId];
-    for (final i in hit) {
-      final nuke = big && i == targetId;
-      _fx(
-        BattleFx(
-          kind: nuke ? BattleFxKind.nuke : BattleFxKind.blast,
-          from: _pos(i),
-          to: _pos(i),
-          army: army,
-          durationMs: nuke ? 1600 : 900,
-        ),
-      );
-    }
-  }
-
-  /// Draws the free card of this turn ("Kart Çek").
-  void drawCard() {
-    if (!_guardTurn()) return;
-    try {
-      final (next, card) = _ability.drawCard(state, state.activeArmyId);
-      _commit(next);
-      _feedback(GameFeedbackKind.cardDrawn, card.index);
-    } on CardAlreadyDrawnException {
-      _feedback(GameFeedbackKind.cardAlreadyDrawn);
+    } on StateError {
+      _feedback(GameFeedbackKind.invalidAbilityTarget);
     }
   }
 
@@ -659,105 +492,43 @@ class GameNotifier extends Notifier<GameState> {
     return true;
   }
 
-  // ─── Bombers ─────────────────────────────────────────────────────────────
+  // ─── deployReinforcements ────────────────────────────────────────────────
 
-  /// Arms a bomber so the next map tap bombs that city (or disarms it).
-  void armBomber() {
+  /// Places the active army's undeployed unit pool (Requirement 4.2) onto
+  /// its own territory [territoryId], up to the base capacity.
+  void deployReinforcements(int territoryId, {int? count}) {
     if (state.phase == GamePhase.victory) return;
-    final armed = ref.read(armedToolProvider.notifier);
-    if (ref.read(armedToolProvider) is ArmedBomber) {
-      armed.set(null);
+    if (!isHumanTurn) {
+      _feedback(GameFeedbackKind.notYourTurn);
       return;
     }
-    if (!_guardTurn()) return;
-    if (state.activeArmy.bombersReady <= 0) {
-      _feedback(GameFeedbackKind.noBomber);
+    final before = state.activeArmy.totalUnitPool;
+    final next = _economy.deployUnits(
+      state,
+      state.activeArmyId,
+      territoryId,
+      count: count,
+    );
+    final deployed = before - next.activeArmy.totalUnitPool;
+    if (deployed <= 0) {
+      _feedback(GameFeedbackKind.cannotDeploy);
       return;
     }
-    armed.set(const ArmedBomber());
-    _feedback(GameFeedbackKind.bomberArmed);
+    state = next;
+    _feedback(GameFeedbackKind.unitsDeployed, deployed);
   }
 
-  /// One bomber of the active army flies to [targetId] and bombs it.
-  Future<void> sendBomber(int targetId) async {
-    if (!_guardTurn()) return;
-    final me = state.activeArmyId;
-    if (state.activeArmy.bombersReady <= 0) {
-      ref.read(armedToolProvider.notifier).set(null);
-      _feedback(GameFeedbackKind.noBomber);
-      return;
-    }
-    if (state.territories[targetId].ownerArmyId == me) {
-      _feedback(GameFeedbackKind.invalidBomberTarget);
-      return;
-    }
-    ref.read(armedToolProvider.notifier).set(null);
-    _busy = true;
-    try {
-      _fx(
-        BattleFx(
-          kind: BattleFxKind.bomber,
-          from: _airfield(me, targetId),
-          to: _pos(targetId),
-          army: me,
-          durationMs: kBomberFlightMs,
-        ),
-      );
-      await _wait(kBomberFlightMs);
-      if (!ref.mounted) return;
-      final before = state.territories[targetId].unitCount;
-      try {
-        _commit(
-          _combat.bomberRaid(
-            state: state,
-            armyId: me,
-            targetTerritoryId: targetId,
-          ),
-        );
-      } on InvalidAttackException {
-        _feedback(GameFeedbackKind.invalidBomberTarget);
-        return;
-      }
-      _fx(
-        BattleFx(
-          kind: BattleFxKind.blast,
-          from: _pos(targetId),
-          to: _pos(targetId),
-          army: me,
-          durationMs: 700,
-        ),
-      );
-      _feedback(
-        GameFeedbackKind.bomberHit,
-        before - state.territories[targetId].unitCount,
-      );
-    } finally {
-      _busy = false;
-    }
-  }
+  // ─── purchaseItem ────────────────────────────────────────────────────────
 
-  /// Where a bomber of [army] takes off for [targetId]: its city nearest
-  /// to the target.
-  Offset _airfield(ArmyId army, int targetId) {
-    final to = _pos(targetId);
-    Offset? best;
-    for (final t in state.territories) {
-      if (t.ownerArmyId != army) continue;
-      final p = _pos(t.id);
-      if (best == null || (p - to).distance < (best - to).distance) best = p;
-    }
-    return best ?? to;
-  }
-
-  // ─── Shop ────────────────────────────────────────────────────────────────
-
-  /// Buys [item] for the active human. Returns `false` (and emits
-  /// feedback) when the purchase is rejected.
+  /// Buys [item] for the human army. Returns `false` (and emits
+  /// insufficient-funds feedback) when the purchase is rejected.
   bool purchaseItem(WeaponItem item) {
-    if (!_guardTurn()) return false;
+    if (!isHumanTurn) {
+      _feedback(GameFeedbackKind.notYourTurn);
+      return false;
+    }
     try {
       state = state.withArmy(_economy.purchaseItem(state.activeArmy, item));
-      _feedback(GameFeedbackKind.purchased);
       return true;
     } on InsufficientDiamondsException {
       _feedback(GameFeedbackKind.insufficientDiamonds);
@@ -767,33 +538,37 @@ class GameNotifier extends Notifier<GameState> {
 
   // ─── endTurn ─────────────────────────────────────────────────────────────
 
-  /// Ends the human's turn: income, saving, then the bots that follow.
+  /// Ends the human army's turn.
+  ///
+  /// Processing order:
+  /// 1. Applies income, unlocks and cooldowns via [TurnService.endTurn].
+  /// 2. Saves the game (Requirement 12.1).
+  /// 3. Runs the turns of every bot that plays before the human again.
   void endTurn() {
     if (!isHumanTurn) return;
-    ref.read(armedToolProvider.notifier).set(null);
+    ref.read(armedAbilityProvider.notifier).set(null);
     selectTerritory(null);
     _commit(_turn.endTurn(state));
     if (state.phase == GamePhase.victory) return;
 
+    // Persist progress at the end of every turn (Requirement 12.1, 12.2).
     saveGame();
 
-    if (!state.activeArmy.isHuman) {
+    if (state.activeArmy.kind == ArmyKind.ai) {
       _runAiTurn();
-    } else {
-      _announceHuman();
     }
   }
 
-  /// Tells the players whose turn it is when several share the phone.
-  void _announceHuman() {
-    if (state.humanIds.length > 1 && state.activeArmy.isHuman) {
-      _feedback(GameFeedbackKind.nextPlayer, state.activeArmyId.index);
-    }
-  }
+  // ─── openShop ────────────────────────────────────────────────────────────
 
-  // ─── Save / load ─────────────────────────────────────────────────────────
+  /// Kept for API compatibility; the shop UI is driven by [shopProvider].
+  void openShop() {}
 
-  /// Persists the current [GameState]; errors are swallowed.
+  // ─── saveGame ────────────────────────────────────────────────────────────
+
+  /// Serialises and persists the current [GameState] via [SaveRepository].
+  ///
+  /// Any persistence error is swallowed so save failures cannot crash the game.
   Future<void> saveGame() async {
     if (state.phase == GamePhase.victory) return;
     try {
@@ -803,8 +578,14 @@ class GameNotifier extends Notifier<GameState> {
     }
   }
 
-  /// Loads a previously saved [GameState]. Returns `true` when a save was
-  /// loaded; bots whose turn it was continue automatically.
+  // ─── loadGame ────────────────────────────────────────────────────────────
+
+  /// Loads a previously saved [GameState] and replaces the current state.
+  ///
+  /// Returns `true` when a save was loaded. If no save exists, or the save
+  /// is corrupted, the current state is left unchanged and `false` is
+  /// returned (Requirement 12.3). If the save was taken while the AI was
+  /// about to play, the AI turn is resumed automatically.
   Future<bool> loadGame() async {
     GameState? loaded;
     try {
@@ -814,11 +595,11 @@ class GameNotifier extends Notifier<GameState> {
     }
     if (loaded == null || !ref.mounted) return false;
     _aiRunning = false;
-    _busy = false;
     ref.read(selectedTerritoryProvider.notifier).select(null);
-    ref.read(armedToolProvider.notifier).set(null);
+    ref.read(armedAbilityProvider.notifier).set(null);
     state = loaded;
-    if (state.phase == GamePhase.playing && !state.activeArmy.isHuman) {
+    if (state.phase == GamePhase.playing &&
+        state.activeArmy.kind == ArmyKind.ai) {
       _runAiTurn();
     }
     return true;
@@ -833,74 +614,43 @@ class GameNotifier extends Notifier<GameState> {
     }
   }
 
-  // ─── Private: bot turns ──────────────────────────────────────────────────
+  // ─── Private: AI turn ────────────────────────────────────────────────────
 
-  /// Plays the turns of all bots one after another until a human plays.
+  /// Plays the turns of all bots (strength follows [GameState.difficulty])
+  /// one after another, ending each, until it is the human's turn again.
   Future<void> _runAiTurn() async {
     if (_aiRunning) return;
     _aiRunning = true;
     try {
-      final bots = state.armies.where((a) => !a.isHuman).length;
+      // With many bots the first moves are shown more briefly, so a round
+      // stays short.
+      final bots = state.armies.where((a) => a.kind == ArmyKind.ai).length;
       final many = bots > 2;
       final slowActions = many ? 2 : kAiSlowActionCount;
       final fastDelayMs = many ? kAiManyBotsFastDelayMs : kAiFastActionDelayMs;
       while (ref.mounted &&
           state.phase == GamePhase.playing &&
-          !state.activeArmy.isHuman) {
+          state.activeArmy.kind == ArmyKind.ai) {
+        // Each action is published as it happens so the map animates.
         await _ai.playTurn(
           state,
           slowActions: slowActions,
           fastDelayMs: fastDelayMs,
-          onAction: (action, before, after) {
-            if (!ref.mounted) return;
-            _botFx(action, before, after);
-            _commit(after);
+          onAction: (s) {
+            if (ref.mounted) _commit(s);
           },
           shouldContinue: () => ref.mounted && state.phase == GamePhase.playing,
         );
         if (!ref.mounted || state.phase == GamePhase.victory) return;
+
+        // End this bot's turn (income, cooldowns, next army).
         _commit(_turn.endTurn(state));
       }
       if (ref.mounted && state.phase == GamePhase.playing) {
         await saveGame();
-        _announceHuman();
       }
     } finally {
       _aiRunning = false;
-    }
-  }
-
-  void _botFx(AiAction action, GameState before, GameState after) {
-    final me = before.activeArmyId;
-    switch (action) {
-      case AttackAction(:final sourceId, :final targetId):
-        _fx(
-          BattleFx(
-            kind: BattleFxKind.march,
-            from: _pos(sourceId),
-            to: _pos(targetId),
-            army: me,
-            durationMs: 450,
-            withTank:
-                before.army(me).tanksReady > 0 &&
-                before.territories[targetId].ownerArmyId != me,
-          ),
-        );
-      case BomberAction(:final targetId):
-        _fx(
-          BattleFx(
-            kind: BattleFxKind.bomber,
-            from: _airfield(me, targetId),
-            to: _pos(targetId),
-            army: me,
-            durationMs: 600,
-          ),
-        );
-      case UseAbilityAction(:final ability, :final targetTerritoryId):
-        _cardFx(ability, me, targetTerritoryId, before, after);
-      case DrawCardAction():
-      case PurchaseAction():
-        break;
     }
   }
 }
@@ -917,12 +667,6 @@ final activeArmyProvider = Provider<Army>(
   (ref) => ref.watch(gameProvider).activeArmy,
 );
 
-/// Provides the human army whose view the screen shows.
-final viewerArmyProvider = Provider<Army>((ref) {
-  final state = ref.watch(gameProvider);
-  return state.army(state.viewerId);
-});
-
 /// Provides `true` when a winner has been declared.
 final isVictoryProvider = Provider<bool>(
   (ref) => ref.watch(gameProvider).phase == GamePhase.victory,
@@ -930,59 +674,37 @@ final isVictoryProvider = Provider<bool>(
 
 // ─── Initial state factory ────────────────────────────────────────────────────
 
-/// Constructs the [GameState] for a brand-new game on the Africa city map.
+/// Constructs the [GameState] for a brand-new game on the Africa tile map.
 ///
-/// - Each human ([humanCount], 1 or 2) starts with four neighbouring cities
-///   holding [kHumanStartUnits] soldiers: the first in Morocco, the second
-///   in South Africa.
-/// - The [botCount] bots (1 … [kMaxBots]) own [kBotStartCities] cities
-///   each. The first [kBotsNearPlayer] start close to the first player —
-///   two steps away, never right next door; the others are spread over
-///   Africa. Their soldiers are random ([kBotStartUnitsMin] …
-///   [kBotStartUnitsMax]).
-/// - Every other city is neutral with a random garrison
-///   ([kNeutralUnitsMin] … [kNeutralUnitsMax]).
-/// - Every army starts with [kStartDiamonds] diamonds, [kStartCards],
-///   [kStartTanks] tanks and [kStartBombers] bombers.
+/// Army 1 (human, blue) starts in Casablanca; the [botCount] bots (1 …
+/// [kMaxBots]) start at the next start bases of the map (Cape Town, Cairo,
+/// Lagos, Mogadishu, Kinshasa, Dakar). Each army owns the [kStartTileCount]
+/// tiles closest to its start base, with [kStartUnitsPerTile] units on each.
+/// Everything else starts neutral.
+///
+/// Each army begins with [kStartDiamonds] diamonds, 10 reserve soldiers and
+/// [kStartCards] (two Fire Bomb cards).
 GameState createInitialGameState({
   AiDifficulty difficulty = AiDifficulty.medium,
-  int botCount = 5,
-  int humanCount = 1,
-  Random? random,
+  int botCount = 1,
 }) {
-  final rng = random ?? Random();
   final graph = TerritoryGraph.bundled();
-  final humans = humanCount.clamp(1, kMaxHumans).toInt();
-  final bots = botCount.clamp(1, kMaxBots).toInt();
-  final ids = ArmyId.values.take(humans + bots).toList();
+  final maxBots = min(kMaxBots, graph.startIds.length - 1);
+  final count = 1 + botCount.clamp(1, maxBots).toInt();
+  final ids = ArmyId.values.take(count).toList();
 
   final owner = <int, ArmyId>{};
-  final units = <int, int>{};
-  for (var h = 0; h < humans; h++) {
-    final cities = graph.humanStarts[h];
-    for (var i = 0; i < cities.length; i++) {
-      owner[cities[i]] = ids[h];
-      units[cities[i]] = kHumanStartUnits[i % kHumanStartUnits.length];
-    }
-  }
-  final homes = botHomes(graph, owner.keys.toSet(), bots);
-  for (var b = 0; b < bots; b++) {
-    for (final city in homes[b]) {
-      owner[city] = ids[humans + b];
-      units[city] =
-          kBotStartUnitsMin +
-          rng.nextInt(kBotStartUnitsMax - kBotStartUnitsMin + 1);
+  for (var i = 0; i < count; i++) {
+    for (final id in _startZone(graph, graph.startIds[i], owner.keys.toSet())) {
+      owner[id] = ids[i];
     }
   }
 
   final territories = [
     for (final t in graph.territories)
       t.copyWith(
+        unitCount: owner[t.id] != null ? kStartUnitsPerTile : 0,
         ownerArmyId: owner[t.id],
-        unitCount:
-            units[t.id] ??
-            kNeutralUnitsMin +
-                rng.nextInt(kNeutralUnitsMax - kNeutralUnitsMin + 1),
       ),
   ];
 
@@ -992,11 +714,10 @@ GameState createInitialGameState({
       for (final id in ids)
         Army(
           id: id,
-          kind: id.index < humans ? ArmyKind.human : ArmyKind.ai,
+          kind: id == ArmyId.army1 ? ArmyKind.human : ArmyKind.ai,
           diamondBalance: kStartDiamonds,
+          totalUnitPool: 10,
           cards: kStartCards,
-          tanks: kStartTanks,
-          bombers: kStartBombers,
         ),
     ],
     currentTurn: 1,
@@ -1007,68 +728,19 @@ GameState createInitialGameState({
   );
 }
 
-/// The start cities of [count] bots ([kBotStartCities] each), given the
-/// cities the humans already hold ([taken]).
-///
-/// The first [kBotsNearPlayer] bots start two steps from the first player's
-/// cities (spread apart); the others take the cities farthest from everyone
-/// else. No bot city is next to another army's city.
-List<List<int>> botHomes(TerritoryGraph graph, Set<int> taken, int count) {
-  final occupied = {...taken};
-  final firstPlayer = graph.humanStarts.first.where(taken.contains).toList();
-  final fromPlayer = graph.distancesFrom(
-    firstPlayer.isEmpty ? graph.humanStarts.first : firstPlayer,
-  );
-  final homes = <List<int>>[];
+// ─── Initial-state helpers ────────────────────────────────────────────────────
 
-  bool free(int id) {
-    if (occupied.contains(id)) return false;
-    return !graph.territories[id].adjacentIds.any(occupied.contains);
-  }
-
-  for (var b = 0; b < count; b++) {
-    final distToOccupied = graph.distancesFrom(occupied);
-    final near = b < kBotsNearPlayer;
-    int? start;
-    for (final t in graph.territories) {
-      if (!free(t.id)) continue;
-      if (near && fromPlayer[t.id] != 2) continue;
-      if (start == null) {
-        start = t.id;
-        continue;
-      }
-      // Near bots: spread around the player; others: as far as possible.
-      final better = distToOccupied[t.id] > distToOccupied[start];
-      if (better) start = t.id;
+/// The [kStartTileCount] tiles nearest (breadth-first) to [startId] that are
+/// not [taken] by another army.
+Set<int> _startZone(TerritoryGraph graph, int startId, Set<int> taken) {
+  final zone = <int>{startId};
+  final queue = Queue<int>()..add(startId);
+  while (queue.isNotEmpty && zone.length < kStartTileCount) {
+    for (final adj in graph.getById(queue.removeFirst()).adjacentIds) {
+      if (zone.length >= kStartTileCount) break;
+      if (taken.contains(adj)) continue;
+      if (zone.add(adj)) queue.add(adj);
     }
-    start ??= _anyFree(graph, occupied);
-    if (start == null) break;
-    final cities = [start];
-    occupied.add(start);
-    while (cities.length < kBotStartCities) {
-      int? next;
-      for (final adj in graph.territories[cities.last].adjacentIds) {
-        if (occupied.contains(adj)) continue;
-        final touchesOther = graph.territories[adj].adjacentIds.any(
-          (n) => occupied.contains(n) && !cities.contains(n),
-        );
-        if (touchesOther) continue;
-        if (near && fromPlayer[adj] < 2) continue;
-        next = adj;
-        break;
-      }
-      if (next == null) break;
-      cities.add(next);
-      occupied.add(next);
-    }
-    homes.add(cities);
   }
-  return homes;
-}
-
-int? _anyFree(TerritoryGraph graph, Set<int> occupied) {
-  for (final t in graph.territories) {
-    if (!occupied.contains(t.id)) return t.id;
-  }
-  return null;
+  return zone;
 }

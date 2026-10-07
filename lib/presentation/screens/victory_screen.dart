@@ -15,6 +15,7 @@ import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
+import 'package:harita/presentation/widgets/common/game_names.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 import 'package:harita/presentation/screens/game_screen.dart';
 import 'package:harita/presentation/screens/main_menu_screen.dart';
@@ -50,8 +51,11 @@ class VictoryScreen extends ConsumerWidget {
             // Resolve winner details — fall back gracefully if called outside
             // a victory state (should not happen in normal flow).
             final winnerId = gameState.winnerId ?? ArmyId.army1;
-            final playerWon = winnerId == ArmyId.army1;
-            final winnerName = t.armyName(winnerId.index);
+            final playerWon = gameState.humanIds.contains(winnerId);
+            // "Mavi Ordu Kazandı!" alone, "Oyuncu 2 Kazandı!" with two.
+            final winnerName = gameState.humanIds.length > 1
+                ? armyDisplayName(gameState, winnerId, t)
+                : t.armyName(winnerId.index);
             final winnerColor = AppTheme.armyColor(winnerId);
             final turn = gameState.currentTurn.toString();
 

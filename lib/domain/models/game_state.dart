@@ -82,9 +82,29 @@ class GameState {
   /// Returns `true` when a winner has been declared.
   bool get isOver => phase == GamePhase.victory;
 
-  /// Number of tiles owned by [id].
+  /// Number of cities owned by [id].
   int tilesOwnedBy(ArmyId id) =>
       territories.where((t) => t.ownerArmyId == id).length;
+
+  /// Ids of the human players, in turn order.
+  List<ArmyId> get humanIds => [
+    for (final a in armies)
+      if (a.isHuman) a.id,
+  ];
+
+  /// The human whose view the screen shows: the active army while a person
+  /// plays, otherwise the last human that played (the first one while bots
+  /// play before anyone else).
+  ArmyId get viewerId {
+    if (activeArmy.isHuman) return activeArmyId;
+    final order = [for (final a in armies) a.id];
+    final from = order.indexOf(activeArmyId);
+    for (var step = 1; step < order.length; step++) {
+      final a = armies[(from - step + order.length) % order.length];
+      if (a.isHuman) return a.id;
+    }
+    return ArmyId.army1;
+  }
 
   /// Ids of the armies that still own at least one tile, in turn order.
   List<ArmyId> get armiesAlive {

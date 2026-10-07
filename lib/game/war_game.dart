@@ -10,6 +10,7 @@ import 'package:flame/game.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/game/components/map_component.dart';
+import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 
 // ─── WarGame ─────────────────────────────────────────────────────────────────
 
@@ -18,8 +19,8 @@ import 'package:harita/game/components/map_component.dart';
 /// [WarGame] owns the Africa [MapComponent] and bridges the Flame rendering
 /// pipeline with the Riverpod state layer via the injected [WidgetRef].
 ///
-/// The camera fits the whole continent into the widget; players can pinch
-/// to zoom in on the small tiles and drag to pan ([SeaBackdrop]).
+/// The camera opens zoomed in on the player's cities; players can pinch to
+/// zoom out to the whole continent and drag to pan ([SeaBackdrop]).
 class WarGame extends FlameGame {
   WarGame({required this.ref});
 
@@ -52,6 +53,27 @@ class WarGame extends FlameGame {
     camera.viewfinder.anchor = Anchor.center;
     await world.addAll([SeaBackdrop(), mapComponent]);
     _applyCamera(recenter: true);
+    focusOnViewer();
+  }
+
+  /// Zoom used to show the player's own cities when a game opens.
+  static const double startZoom = 2.6;
+
+  /// Zooms in on the cities of the player whose turn it is (or who played
+  /// last), so their numbers can be read at once.
+  void focusOnViewer() {
+    final state = ref.read(gameProvider);
+    final mine = [
+      for (final t in state.territories)
+        if (t.ownerArmyId == state.viewerId)
+          mapComponent.graph.getPosition(t.id),
+    ];
+    if (mine.isEmpty) return;
+    final center = mine.reduce((a, b) => a + b) / mine.length.toDouble();
+    userZoom = startZoom;
+    _applyCamera();
+    camera.viewfinder.position = Vector2(center.dx, center.dy);
+    _clampPosition();
   }
 
   @override
@@ -113,7 +135,7 @@ class WarGame extends FlameGame {
 /// [WarGame.backgroundColor], which — unlike a huge painted rectangle — never
 /// spills over the HUD widgets around the canvas.
 class SeaBackdrop extends PositionComponent
-    with ScaleCallbacks, HasGameReference<WarGame> {
+    with DragCallbacks, ScaleCallbacks, HasGameReference<WarGame> {
   SeaBackdrop()
     : super(
         position: Vector2.all(-5000),
@@ -133,9 +155,15 @@ class SeaBackdrop extends PositionComponent
     _zoomAtStart = game.userZoom;
   }
 
+  /// Two fingers zoom (and move); one finger is a drag and pans.
   @override
   void onScaleUpdate(ScaleUpdateEvent event) {
-    if (event.pointerCount > 1) game.zoomTo(_zoomAtStart * event.scale);
-    game.panBy(event.focalPointDelta);
+    if (event.pointerCount < 2) return;
+    game
+      ..zoomTo(_zoomAtStart * event.scale)
+      ..panBy(event.focalPointDelta);
   }
+
+  @override
+  void onDragUpdate(DragUpdateEvent event) => game.panBy(event.canvasDelta);
 }

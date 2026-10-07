@@ -1,11 +1,9 @@
 /// Intro screen for Harita: Kendi İmparatorluğunu Kur.
 ///
 /// Played every time the app opens: on a white screen an atomic bomb falls
-/// and hits, a blinding flash gives way to a real photograph of an atomic
-/// test explosion (Operation Upshot-Knothole "Badger", 1953 — public domain)
-/// that swells as the fireball grows, then dark smoke rolls over the screen
-/// and clears to reveal the main menu (New Game, Resume, How to Play).
-/// Tapping anywhere skips straight to the menu.
+/// and hits, a fireball and a mushroom cloud rise, the smoke fills the
+/// screen and then clears to reveal the main menu (New Game, Resume, How to
+/// Play). Tapping anywhere skips straight to the menu.
 library;
 
 import 'dart:math';
@@ -21,10 +19,7 @@ class IntroScreen extends ConsumerStatefulWidget {
   const IntroScreen({super.key});
 
   /// Total length of the intro.
-  static const Duration duration = Duration(milliseconds: 6000);
-
-  /// The explosion photograph.
-  static const String photoAsset = 'assets/images/nuke_badger.jpg';
+  static const Duration duration = Duration(milliseconds: 5200);
 
   @override
   ConsumerState<IntroScreen> createState() => _IntroScreenState();
@@ -50,15 +45,8 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
           ..forward();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Decode the photo early so it is ready at the moment of the blast.
-    precacheImage(const AssetImage(IntroScreen.photoAsset), context);
-  }
-
   void _onTick() {
-    if (!_boomPlayed && _controller.value >= IntroTimeline.soundStart) {
+    if (!_boomPlayed && _controller.value >= _IntroPainter.impact - 0.04) {
       _boomPlayed = true;
       ref.read(audioServiceProvider).playSfx(AudioService.sfxNuke);
     }
@@ -85,7 +73,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
         AnimatedBuilder(
           animation: _controller,
           builder: (context, child) => Opacity(
-            opacity: _done ? 1 : IntroTimeline.menuOpacity(_controller.value),
+            opacity: _done ? 1 : _IntroPainter.menuOpacity(_controller.value),
             child: child,
           ),
           child: const MainMenuScreen(),
@@ -97,36 +85,8 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
             onTap: _skip,
             child: AnimatedBuilder(
               animation: _controller,
-              builder: (context, _) {
-                final t = _controller.value;
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (t < IntroTimeline.coverEnd)
-                      const ColoredBox(color: Colors.white),
-                    // The real explosion, growing like a fireball.
-                    if (t >= IntroTimeline.impact && t < IntroTimeline.coverEnd)
-                      Opacity(
-                        opacity: IntroTimeline.photoOpacity(t),
-                        child: Transform.translate(
-                          offset: IntroTimeline.shake(t),
-                          child: Transform.scale(
-                            scale: IntroTimeline.photoScale(t),
-                            alignment: const Alignment(0, -0.1),
-                            child: Image.asset(
-                              IntroScreen.photoAsset,
-                              key: const Key('intro_photo'),
-                              fit: BoxFit.cover,
-                              alignment: const Alignment(0, 0.2),
-                              gaplessPlayback: true,
-                            ),
-                          ),
-                        ),
-                      ),
-                    CustomPaint(painter: _IntroPainter(t)),
-                  ],
-                );
-              },
+              builder: (context, _) =>
+                  CustomPaint(painter: _IntroPainter(_controller.value)),
             ),
           ),
       ],
@@ -134,57 +94,26 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
   }
 }
 
-// ─── Timeline ────────────────────────────────────────────────────────────────
-
-/// Timing of the intro as fractions of [IntroScreen.duration].
-abstract final class IntroTimeline {
-  /// The bomb hits the ground.
-  static const double impact = 0.18;
-
-  /// The blast sound starts with a 1 s falling whistle, so it is started
-  /// that much before [impact] for the boom to land on the flash.
-  static const double soundStart = impact - 1.0 / 6.0;
-
-  /// The white flash has faded and the photo is fully visible.
-  static const double flashEnd = 0.28;
-
-  /// Smoke starts rolling in.
-  static const double smokeStart = 0.6;
-
-  /// Smoke covers the whole screen; the menu is placed underneath.
-  static const double coverEnd = 0.78;
-
-  static double seg(double t, double a, double b) =>
-      ((t - a) / (b - a)).clamp(0.0, 1.0);
-
-  /// Opacity of the menu under the overlay at progress [t].
-  static double menuOpacity(double t) => t < coverEnd ? 0 : 1;
-
-  /// The photo fades in under the flash.
-  static double photoOpacity(double t) =>
-      Curves.easeOut.transform(seg(t, impact, impact + 0.06));
-
-  /// The photo starts close-up and pulls back as the cloud grows.
-  static double photoScale(double t) =>
-      1.3 - 0.3 * Curves.easeOutCubic.transform(seg(t, impact, coverEnd));
-
-  /// Ground shake right after the blast.
-  static Offset shake(double t) {
-    if (t < impact || t > impact + 0.16) return Offset.zero;
-    final k = 1 - seg(t, impact, impact + 0.16);
-    return Offset(sin(t * 420) * 12 * k, cos(t * 510) * 8 * k);
-  }
-}
-
 // ─── Painter ─────────────────────────────────────────────────────────────────
 
-/// Draws the falling bomb, the flash and the smoke at progress [t] (0 … 1).
+/// Draws the intro at progress [t] (0 … 1).
 class _IntroPainter extends CustomPainter {
   _IntroPainter(this.t);
 
   final double t;
 
-  static final List<_Puff> _smokePuffs = _makePuffs(60, 3);
+  /// Progress at which the bomb hits the ground.
+  static const double impact = 0.2;
+
+  static const double _cloudEnd = 0.55;
+  static const double _coverEnd = 0.75;
+
+  /// Opacity of the menu under the overlay at progress [t].
+  static double menuOpacity(double t) => t < _coverEnd ? 0 : 1;
+
+  static final List<_Puff> _capPuffs = _makePuffs(26, 1);
+  static final List<_Puff> _stemPuffs = _makePuffs(14, 2);
+  static final List<_Puff> _coverPuffs = _makePuffs(34, 3);
 
   static List<_Puff> _makePuffs(int n, int seed) {
     final rng = Random(seed);
@@ -193,11 +122,14 @@ class _IntroPainter extends CustomPainter {
         _Puff(
           rng.nextDouble() * 2 - 1,
           rng.nextDouble() * 2 - 1,
-          0.5 + rng.nextDouble() * 0.7,
+          0.6 + rng.nextDouble() * 0.6,
           rng.nextDouble(),
         ),
     ];
   }
+
+  static double _seg(double t, double a, double b) =>
+      ((t - a) / (b - a)).clamp(0.0, 1.0);
 
   /// A soft, blurred smoke puff.
   static void _puff(Canvas canvas, Offset c, double r, Color color) {
@@ -206,7 +138,33 @@ class _IntroPainter extends CustomPainter {
       r,
       Paint()
         ..color = color
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.45 + 1),
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.35 + 1),
+    );
+  }
+
+  /// A glowing ball: white-hot centre fading out through [mid] and [edge].
+  static void _glow(
+    Canvas canvas,
+    Offset c,
+    double r,
+    Color mid,
+    Color edge,
+    double alpha,
+  ) {
+    if (r <= 0 || alpha <= 0) return;
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: alpha),
+            mid.withValues(alpha: alpha),
+            edge.withValues(alpha: alpha * 0.8),
+            edge.withValues(alpha: 0),
+          ],
+          stops: const [0, 0.3, 0.7, 1],
+        ).createShader(Rect.fromCircle(center: c, radius: r)),
     );
   }
 
@@ -214,140 +172,195 @@ class _IntroPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
+    final ground = h * 0.74;
+    final cx = w / 2;
     final unit = min(w, h);
-    final ground = h * 0.8;
-    const seg = IntroTimeline.seg;
 
-    // ── The falling bomb ────────────────────────────────────────────────
-    if (t < IntroTimeline.impact) {
-      final fall = Curves.easeIn.transform(seg(t, 0, IntroTimeline.impact));
-      final y = -unit * 0.3 + (ground + unit * 0.3) * fall;
-      // Its shadow on the ground grows as it comes down.
-      canvas.drawOval(
-        Rect.fromCenter(
-          center: Offset(w / 2, ground),
-          width: unit * 0.25 * fall,
-          height: unit * 0.04 * fall,
-        ),
-        Paint()
-          ..color = Colors.black.withValues(alpha: 0.25 * fall)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
-      );
-      _drawBomb(canvas, Offset(w / 2, y), unit * 0.055);
+    final reveal = _seg(t, _coverEnd, 1);
+    if (t < _coverEnd) {
+      canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
     }
 
-    // ── Blinding flash at the impact ────────────────────────────────────
-    final flash =
-        seg(t, IntroTimeline.impact, IntroTimeline.impact + 0.015) *
-        (1 - seg(t, IntroTimeline.impact + 0.02, IntroTimeline.flashEnd));
-    if (flash > 0) {
-      canvas.drawRect(
-        Offset.zero & size,
-        Paint()
-          ..shader = RadialGradient(
-            center: const Alignment(0, 0.4),
-            radius: 1.2,
-            colors: [
-              Colors.white.withValues(alpha: flash),
-              const Color(0xFFFFF8E1).withValues(alpha: flash),
-              const Color(0xFFFFE0B2).withValues(alpha: flash * 0.9),
-            ],
-          ).createShader(Offset.zero & size),
-      );
-    }
+    // Screen shake right after the impact.
+    final shake = t > impact && t < impact + 0.15
+        ? sin(t * 400) * 12 * (1 - _seg(t, impact, impact + 0.15))
+        : 0.0;
+    canvas
+      ..save()
+      ..translate(shake, shake * 0.6);
 
-    // ── Smoke rolls over the whole screen, then drifts away ─────────────
-    final cover = Curves.easeIn.transform(
-      seg(t, IntroTimeline.smokeStart, IntroTimeline.coverEnd),
-    );
-    final clear = Curves.easeIn.transform(seg(t, IntroTimeline.coverEnd, 1));
-    if (cover > 0) {
-      final diag = sqrt(w * w + h * h);
-      for (final p in _smokePuffs) {
-        final drift = 1 + clear * 1.8;
-        final c = Offset(
-          w / 2 + p.x * w * 0.6 * drift,
-          h * 0.55 + p.y * h * 0.6 * drift - cover * h * 0.1,
+    final groundPaint = Paint()
+      ..color = const Color(0xFFD7CCC8)
+      ..strokeWidth = 3;
+
+    if (t < impact) {
+      // ── The falling bomb ───────────────────────────────────────────────
+      final fall = Curves.easeIn.transform(_seg(t, 0, impact));
+      final y = -unit * 0.2 + (ground + unit * 0.2) * fall;
+      canvas.drawLine(Offset(0, ground), Offset(w, ground), groundPaint);
+      _drawBomb(canvas, Offset(cx, y), unit * 0.06);
+    } else if (t < _coverEnd) {
+      // ── Fireball, shock wave, mushroom cloud ───────────────────────────
+      final grow = Curves.easeOutCubic.transform(_seg(t, impact, _cloudEnd));
+      final cool = _seg(t, impact + 0.04, _cloudEnd + 0.05);
+      final hot = Color.lerp(
+        const Color(0xFFFFEB3B),
+        const Color(0xFFE65100),
+        cool,
+      )!;
+      final smoke = Color.lerp(
+        const Color(0xFF8D6E63),
+        const Color(0xFF616161),
+        cool,
+      )!;
+      canvas.drawLine(Offset(0, ground), Offset(w, ground), groundPaint);
+
+      // Shock wave racing along the ground.
+      final wave = _seg(t, impact, impact + 0.2);
+      if (wave < 1) {
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(cx, ground),
+            width: w * 2.2 * wave,
+            height: unit * 0.18 * wave,
+          ),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 6 * (1 - wave) + 1
+            ..color = const Color(0xFFFFCC80).withValues(alpha: 1 - wave)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
         );
-        final base = Color.lerp(
-          const Color(0xFF3E2723),
-          const Color(0xFF757575),
-          p.shade,
-        )!;
-        // Big soft billows that thicken (rather than grow from dots).
+      }
+
+      // Dust skirt at the base.
+      for (final p in _stemPuffs) {
         _puff(
           canvas,
-          c,
-          diag * 0.3 * p.r * (0.6 + 0.4 * cover),
-          base.withValues(alpha: cover * (1 - clear)),
+          Offset(cx + p.x * unit * 0.42 * grow, ground - unit * 0.03 * p.r),
+          unit * 0.07 * p.r * (0.3 + grow),
+          smoke.withValues(alpha: 0.75),
+        );
+      }
+
+      // Stem: a column of rising smoke, glowing at the bottom.
+      final capY = ground - unit * 0.62 * grow;
+      for (var i = 0; i < 12; i++) {
+        final f = i / 11;
+        final y = ground - (ground - capY) * f;
+        final r = unit * (0.075 - 0.03 * f) * (0.4 + grow * 0.6);
+        _puff(
+          canvas,
+          Offset(cx + sin(i * 1.7) * unit * 0.01, y),
+          r,
+          Color.lerp(hot, smoke, 0.35 + 0.5 * f)!,
+        );
+      }
+
+      // Cap: a wide, rolling cloud with a glowing underside.
+      final capW = unit * 0.36 * grow;
+      final capH = unit * 0.15 * grow;
+      for (final p in _capPuffs) {
+        final ring = p.y; // -1 … 1: back to front of the rolling cap
+        final pos = Offset(cx + p.x * capW, capY + ring * capH * 0.55);
+        final shade = Color.lerp(hot, smoke, (0.3 + 0.7 * p.shade) * cool)!;
+        _puff(canvas, pos, unit * 0.1 * p.r * grow, shade);
+      }
+      // Fireball heart inside the cap, fading as it cools.
+      _glow(
+        canvas,
+        Offset(cx, capY + capH * 0.2),
+        unit * 0.24 * grow,
+        hot,
+        const Color(0xFFFF6F00),
+        1 - cool * 0.85,
+      );
+
+      // Smoke rolls over the whole screen.
+      final cover = Curves.easeIn.transform(
+        _seg(t, _cloudEnd - 0.1, _coverEnd),
+      );
+      if (cover > 0) {
+        final diag = sqrt(w * w + h * h);
+        for (final p in _coverPuffs) {
+          _puff(
+            canvas,
+            Offset(cx + p.x * w * 0.7, capY + p.y * h * 0.7),
+            diag * 0.3 * p.r * cover,
+            Color.lerp(
+              const Color(0xFF616161),
+              const Color(0xFF9E9E9E),
+              p.shade,
+            )!,
+          );
+        }
+      }
+
+      // Blinding flash at the impact.
+      final flash = 1 - _seg(t, impact, impact + 0.07);
+      if (flash > 0) {
+        _glow(
+          canvas,
+          Offset(cx, ground),
+          unit * (0.2 + 1.4 * (1 - flash)),
+          const Color(0xFFFFF59D),
+          const Color(0xFFFFB300),
+          flash,
+        );
+        canvas.drawRect(
+          Offset.zero & size,
+          Paint()..color = Colors.white.withValues(alpha: flash * 0.85),
+        );
+      }
+    }
+    canvas.restore();
+
+    // ── The smoke drifts away, revealing the menu ─────────────────────────
+    if (t >= _coverEnd) {
+      final fade = 1 - Curves.easeIn.transform(reveal);
+      for (final p in _coverPuffs) {
+        final drift = 1 + reveal * 1.5;
+        _puff(
+          canvas,
+          Offset(w / 2 + p.x * w * 0.6 * drift, h / 2 + p.y * h * 0.6 * drift),
+          unit * 0.45 * p.r,
+          Color.lerp(
+            const Color(0xFF757575),
+            const Color(0xFFBDBDBD),
+            p.shade,
+          )!.withValues(alpha: fade),
         );
       }
     }
   }
 
-  /// A heavy, round atomic bomb ("Fat Man" shape) with its nose at [nose].
   void _drawBomb(Canvas canvas, Offset nose, double r) {
-    final c = nose.translate(0, -r * 1.25);
-    final body = Rect.fromCenter(center: c, width: r * 2.4, height: r * 2.6);
-    final steel = Paint()
-      ..shader = LinearGradient(
-        colors: const [Color(0xFF8D9A72), Color(0xFF4A5536), Color(0xFF1F2616)],
-        stops: const [0, 0.45, 1],
-      ).createShader(body);
-    final dark = Paint()..color = const Color(0xFF1F2616);
-
-    // Motion streaks above the bomb.
-    final streak = Paint()
-      ..color = const Color(0x22000000)
-      ..strokeWidth = 2;
-    for (var i = -2; i <= 2; i++) {
-      final x = c.dx + i * r * 0.45;
-      canvas.drawLine(
-        Offset(x, c.dy - r * 3.2),
-        Offset(x, c.dy - r * 6),
-        streak,
-      );
-    }
-    // Box tail with fins.
-    final tail = Rect.fromCenter(
-      center: c.translate(0, -r * 2),
-      width: r * 1.8,
-      height: r * 1.0,
-    );
+    final body = Paint()..color = const Color(0xFF37474F);
+    final dark = Paint()..color = const Color(0xFF263238);
+    final stripe = Paint()..color = const Color(0xFFFFC107);
+    final center = nose.translate(0, -r * 1.6);
     canvas
-      ..drawRect(
-        Rect.fromCenter(
-          center: c.translate(0, -r * 1.4),
-          width: r * 0.8,
-          height: r * 0.9,
-        ),
+      // Tail fins.
+      ..drawPath(
+        Path()
+          ..moveTo(center.dx - r, center.dy - r * 2.6)
+          ..lineTo(center.dx + r, center.dy - r * 2.6)
+          ..lineTo(center.dx + r * 0.4, center.dy - r * 1.2)
+          ..lineTo(center.dx - r * 0.4, center.dy - r * 1.2)
+          ..close(),
         dark,
       )
-      ..drawRect(tail, dark)
-      ..drawRect(
-        tail.deflate(r * 0.15),
-        Paint()..color = const Color(0xFF3A4429),
-      )
       // Body.
-      ..drawOval(body, steel)
-      // Highlight.
       ..drawOval(
-        Rect.fromCenter(
-          center: c.translate(-r * 0.5, -r * 0.4),
-          width: r * 0.5,
-          height: r * 1.1,
-        ),
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.25)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.15),
+        Rect.fromCenter(center: center, width: r * 2, height: r * 3.6),
+        body,
       )
-      // Seam and bolts.
-      ..drawLine(
-        Offset(body.left + r * 0.05, c.dy),
-        Offset(body.right - r * 0.05, c.dy),
-        Paint()
-          ..color = const Color(0xFF151A0F)
-          ..strokeWidth = 1.5,
+      ..drawRect(
+        Rect.fromCenter(
+          center: center.translate(0, -r * 0.6),
+          width: r * 1.9,
+          height: r * 0.35,
+        ),
+        stripe,
       );
   }
 

@@ -5,21 +5,19 @@ import 'package:harita/domain/models/army.dart';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
-/// Classifies a territory by its strategic role on the map.
+/// Classifies a city by its value on the map.
 enum TerritoryType {
-  /// A standard contestable region with no capacity limit.
-  normal,
+  /// An ordinary city.
+  city,
 
-  /// A resource-generating base with a capacity of 150 units.
-  bigBase,
-
-  /// A resource-generating base with a capacity below 150 units.
-  smallBase,
+  /// A big capital that is a gold mine: capturing it pays
+  /// [kGoldMineReward] diamonds.
+  goldMine,
 }
 
 // ─── Territory ───────────────────────────────────────────────────────────────
 
-/// Represents one small square tile ("minik kare") of the Africa map.
+/// One city of the Africa map together with the region around it.
 ///
 /// Immutable by design — mutating state is done via [copyWith].
 class Territory {
@@ -30,39 +28,39 @@ class Territory {
     required this.adjacentIds,
     required this.unitCount,
     this.ownerArmyId,
-    this.baseCapacity,
     this.hasDiamondMine = false,
+    this.hasForest = false,
   });
 
   /// Unique identifier, 0 … kTerritoryCount - 1.
   final int id;
 
-  /// Locale key used to look up the display name.
+  /// Stable key of the city (e.g. `city_cairo`); the display name comes
+  /// from the map ([TerritoryGraph.cityName]).
   final String name;
 
-  /// Strategic classification of this territory.
+  /// Whether this is a gold-mine city.
   final TerritoryType type;
 
-  /// IDs of territories directly reachable from this one (bidirectional).
+  /// IDs of the neighbouring cities (bidirectional).
   final List<int> adjacentIds;
 
-  /// Number of units currently stationed here.
+  /// Soldiers in this city — the number drawn on it.
   final int unitCount;
 
-  /// The army that currently owns this territory, or `null` if neutral.
+  /// The army that currently owns this city, or `null` if neutral.
   final ArmyId? ownerArmyId;
 
-  /// Maximum unit capacity; only set for [TerritoryType.bigBase] and
-  /// [TerritoryType.smallBase] territories.
-  final int? baseCapacity;
-
-  /// Whether a diamond mine sits on this tile. Capturing it pays
+  /// Whether a diamond mine lies in this region. Capturing it pays
   /// [kDiamondMineReward] diamonds.
   final bool hasDiamondMine;
 
-  /// Whether this tile is a gold mine: every base is one. Capturing it pays
-  /// [kGoldMineReward] diamonds.
-  bool get hasGoldMine => type != TerritoryType.normal;
+  /// Whether this region is a forest: defenders count
+  /// [kForestDefenseBonus] more.
+  final bool hasForest;
+
+  /// Whether this city is a gold mine.
+  bool get hasGoldMine => type == TerritoryType.goldMine;
 
   // ─── copyWith ─────────────────────────────────────────────────────────────
 
@@ -74,8 +72,8 @@ class Territory {
     int? unitCount,
     // Use a sentinel so callers can explicitly clear the owner (set to null).
     Object? ownerArmyId = _sentinel,
-    Object? baseCapacity = _sentinel,
     bool? hasDiamondMine,
+    bool? hasForest,
   }) {
     return Territory(
       id: id ?? this.id,
@@ -86,10 +84,8 @@ class Territory {
       ownerArmyId: ownerArmyId == _sentinel
           ? this.ownerArmyId
           : ownerArmyId as ArmyId?,
-      baseCapacity: baseCapacity == _sentinel
-          ? this.baseCapacity
-          : baseCapacity as int?,
       hasDiamondMine: hasDiamondMine ?? this.hasDiamondMine,
+      hasForest: hasForest ?? this.hasForest,
     );
   }
 
@@ -105,8 +101,8 @@ class Territory {
         _listEquals(adjacentIds, other.adjacentIds) &&
         unitCount == other.unitCount &&
         ownerArmyId == other.ownerArmyId &&
-        baseCapacity == other.baseCapacity &&
-        hasDiamondMine == other.hasDiamondMine;
+        hasDiamondMine == other.hasDiamondMine &&
+        hasForest == other.hasForest;
   }
 
   @override
@@ -117,14 +113,14 @@ class Territory {
     Object.hashAll(adjacentIds),
     unitCount,
     ownerArmyId,
-    baseCapacity,
     hasDiamondMine,
+    hasForest,
   );
 
   @override
   String toString() =>
-      'Territory(id: $id, name: $name, type: $type, '
-      'units: $unitCount, owner: $ownerArmyId)';
+      'Territory(id: $id, name: $name, units: $unitCount, '
+      'owner: $ownerArmyId)';
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

@@ -10,10 +10,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
-import 'package:harita/domain/models/army.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 import 'package:harita/presentation/widgets/common/difficulty_picker.dart';
+import 'package:harita/presentation/widgets/common/game_names.dart';
 
 /// Shows "Turn: X" and "Active Army: [coloured dot] Name" in the HUD.
 ///
@@ -36,7 +36,7 @@ class TurnIndicator extends ConsumerWidget {
         final currentTurn = gameState.currentTurn;
         final activeArmyId = gameState.activeArmyId;
 
-        final armyName = strings.armyName(activeArmyId.index);
+        final armyName = armyDisplayName(gameState, activeArmyId, strings);
         final armyDotColor = AppTheme.armyColor(activeArmyId);
 
         return Container(
@@ -60,9 +60,9 @@ class TurnIndicator extends ConsumerWidget {
                   label: strings.activeArmyLabel,
                   armyName: armyName,
                   dotColor: armyDotColor,
-                  thinkingLabel: activeArmyId != ArmyId.army1
-                      ? strings.aiThinking
-                      : null,
+                  thinkingLabel: gameState.activeArmy.isHuman
+                      ? null
+                      : strings.aiThinking,
                 ),
               ),
             ],

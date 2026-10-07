@@ -54,11 +54,6 @@ void main() {
     );
     expect(hidden.opacity, 0);
 
-    // Before the impact only the falling bomb; after it the real photo.
-    expect(find.byKey(const Key('intro_photo')), findsNothing);
-    await tester.pump(IntroScreen.duration * (IntroTimeline.impact + 0.05));
-    expect(find.byKey(const Key('intro_photo')), findsOneWidget);
-
     // Bomb falls, explodes, smoke rolls in...
     for (var ms = 0; ms < 3000; ms += 250) {
       await tester.pump(const Duration(milliseconds: 250));

@@ -1,8 +1,4 @@
-/// AbilityPanel HUD widget for Harita: Kendi İmparatorluğunu Kur.
-///
-/// Shows the ability cards of the human army with their current unlock /
-/// cooldown status. Each card has its own colour (the Fire Bomb card is
-/// green); tapping a card arms it.
+/// The player's hand of cards ("Kartların") for Harita.
 library;
 
 import 'package:flutter/material.dart';
@@ -12,46 +8,23 @@ import 'package:harita/core/audio_service.dart';
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
 import 'package:harita/domain/models/special_ability.dart';
-import 'package:harita/domain/services/ability_service.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
+import 'package:harita/presentation/widgets/common/game_names.dart';
 
-/// Localised display name for [type].
-String abilityDisplayName(AbilityType type, AppStrings strings) {
-  switch (type) {
-    case AbilityType.fireBomb:
-      return strings.abilityFireBomb;
-    case AbilityType.bombardment:
-      return strings.abilityBombardment;
-    case AbilityType.soldierSpell:
-      return strings.abilitySoldierSpell;
-    case AbilityType.megaBomba:
-      return strings.abilityMegaBomba;
-  }
-}
-
-/// Icon shown on the card of [type].
-IconData abilityIcon(AbilityType type) => switch (type) {
-  AbilityType.fireBomb => Icons.local_fire_department_rounded,
-  AbilityType.bombardment => Icons.flare_rounded,
-  AbilityType.soldierSpell => Icons.groups_rounded,
-  AbilityType.megaBomba => Icons.brightness_7_rounded,
-};
+export 'package:harita/presentation/widgets/common/game_names.dart'
+    show abilityDisplayName, abilityIcon;
 
 // ─── AbilityPanel ─────────────────────────────────────────────────────────────
 
-/// Row of the ability cards of the human army (Army 1).
-///
-/// Tapping a ready ability arms it (see [abilityTargetingProvider]); the next
-/// territory tapped on the map becomes its target. Tapping a locked / cooling
-/// down ability explains why it cannot be used (Requirements 6.7, 6.8, 11.4).
+/// A scrollable row with every card and how many of it the player holds.
+/// Tap a card, then a city, to play it.
 class AbilityPanel extends ConsumerWidget {
   const AbilityPanel({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final gameState = ref.watch(gameProvider);
-    final humanArmy = gameState.army1;
+    final army = ref.watch(viewerArmyProvider);
     final armed = ref.watch(armedAbilityProvider);
     final locale = ref.watch(localeProvider);
     final localeServiceAsync = ref.watch(localeServiceProvider);
@@ -61,189 +34,159 @@ class AbilityPanel extends ConsumerWidget {
       error: (_, __) => const SizedBox.shrink(),
       data: (localeService) {
         final strings = localeService.of(locale);
-        final currentTurn = gameState.currentTurn;
-
         return Container(
           color: AppTheme.kBackground,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: AbilityType.values.map((type) {
-              final abilityState = humanArmy.abilities[type];
-              final name = abilityDisplayName(type, strings);
-              return Expanded(
-                child: Padding(
+          height: 74,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            children: [
+              for (final type in AbilityType.values)
+                Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 3),
-                  child: _AbilityButton(
-                    abilityType: type,
-                    abilityState: abilityState,
-                    currentTurn: currentTurn,
-                    tooltip: _tooltipFor(type, strings),
-                    name: name,
+                  child: _CardButton(
+                    type: type,
+                    count: army.cardCount(type),
+                    name: abilityDisplayName(type, strings),
+                    tooltip: abilityTooltip(type, strings),
                     isArmed: armed == type,
-                    onTap: () => _onAbilityTap(ref, type),
+                    onTap: () {
+                      ref
+                          .read(audioServiceProvider)
+                          .playSfx(AudioService.sfxButtonTap);
+                      ref.read(gameProvider.notifier).armAbility(type);
+                    },
                   ),
                 ),
-              );
-            }).toList(),
+            ],
           ),
         );
       },
     );
   }
+}
 
-  /// Arms / disarms [type]. The [GameNotifier] emits a [GameFeedback] that
-  /// the game screen turns into a localized message (locked turn, cooldown,
-  /// "tap a territory", …) — Requirements 6.7, 6.8, 11.4.
-  void _onAbilityTap(WidgetRef ref, AbilityType type) {
-    ref.read(audioServiceProvider).playSfx(AudioService.sfxButtonTap);
-    ref.read(gameProvider.notifier).armAbility(type);
-  }
+/// A card name on one or two lines, shrunk to fit instead of breaking a
+/// long word ("Bombardıman").
+class _CardName extends StatelessWidget {
+  const _CardName({required this.name, required this.color});
 
-  String _tooltipFor(AbilityType type, AppStrings strings) {
-    switch (type) {
-      case AbilityType.fireBomb:
-        return strings.tooltipFireBomb;
-      case AbilityType.bombardment:
-        return strings.tooltipBombardment;
-      case AbilityType.soldierSpell:
-        return strings.tooltipSoldierSpell;
-      case AbilityType.megaBomba:
-        return strings.tooltipMegaBomba;
-    }
+  final String name;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(
+      fontSize: 13,
+      height: 1.1,
+      fontWeight: FontWeight.w700,
+      color: color,
+    );
+    final words = name.split(' ');
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final line
+            in words.length > 1
+                ? [words.first, words.skip(1).join(' ')]
+                : [name])
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(line, style: style, maxLines: 1),
+          ),
+      ],
+    );
   }
 }
 
-// ─── _AbilityButton ──────────────────────────────────────────────────────────
+// ─── _CardButton ─────────────────────────────────────────────────────────────
 
-/// A single ability button tile inside [AbilityPanel].
-class _AbilityButton extends StatelessWidget {
-  const _AbilityButton({
-    required this.abilityType,
-    required this.abilityState,
-    required this.currentTurn,
-    required this.tooltip,
+class _CardButton extends StatelessWidget {
+  const _CardButton({
+    required this.type,
+    required this.count,
     required this.name,
+    required this.tooltip,
     required this.isArmed,
     required this.onTap,
   });
 
-  final AbilityType abilityType;
-  final AbilityState? abilityState;
-  final int currentTurn;
-  final String tooltip;
+  final AbilityType type;
+  final int count;
   final String name;
+  final String tooltip;
   final bool isArmed;
   final VoidCallback onTap;
 
-  // ── Computed state ───────────────────────────────────────────────────────
-
-  int get _unlockTurn => kAbilityUnlockTurns[abilityType] ?? 0;
-  bool get _isUnlocked => abilityState?.isUnlocked ?? false;
-  bool get _isOnCooldown => abilityState?.isOnCooldown ?? false;
-  int get _cooldownLeft => abilityState?.cooldownTurnsRemaining ?? 0;
-  bool get _isReady => _isUnlocked && !_isOnCooldown;
-
-  // ── Visual logic ─────────────────────────────────────────────────────────
-
-  Color get _cardColor => AppTheme.abilityColor(abilityType);
-
-  Color get _backgroundColor {
-    if (!_isUnlocked) return AppTheme.kNeutralLight;
-    if (_isOnCooldown) return Color.lerp(_cardColor, Colors.white, 0.65)!;
-    return _cardColor;
-  }
-
-  Color get _foregroundColor {
-    if (!_isUnlocked) return AppTheme.kTextDark.withAlpha(120);
-    if (_isOnCooldown) return AppTheme.kTextDark;
-    return AppTheme.kTextLight;
-  }
-
-  // ── Status badge ─────────────────────────────────────────────────────────
-
-  (IconData, String)? get _badge {
-    if (!_isUnlocked) return (Icons.lock_rounded, '$_unlockTurn');
-    if (_isOnCooldown) return (Icons.timer_rounded, '$_cooldownLeft');
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final badge = _badge;
-
+    final color = AppTheme.abilityColor(type);
+    final has = count > 0;
+    final bg = has ? color : AppTheme.kNeutralLight;
+    final fg = has ? AppTheme.kTextLight : AppTheme.kTextDark.withAlpha(110);
     return Tooltip(
-      // Flutter Tooltip as a second fallback; primary feedback is SnackBar.
       message: tooltip,
       preferBelow: false,
       child: InkWell(
-        key: Key('ability_${abilityType.name}'),
+        key: Key('ability_${type.name}'),
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
+          width: 92,
           decoration: BoxDecoration(
-            color: _backgroundColor,
+            color: bg,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: isArmed
-                  ? AppTheme.kWarning
-                  : _isReady
-                  ? _cardColor.withAlpha(160)
-                  : Colors.transparent,
-              width: isArmed ? 4 : 1.5,
+              color: isArmed ? AppTheme.kWarning : Colors.transparent,
+              width: isArmed ? 4 : 1,
             ),
+            boxShadow: has
+                ? [
+                    BoxShadow(
+                      color: color.withAlpha(90),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+          child: Stack(
             children: [
-              Icon(abilityIcon(abilityType), size: 24, color: _foregroundColor),
-              const SizedBox(height: 2),
-
-              // Short ability name — min 16 sp
-              Text(
-                _shortName,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: _foregroundColor,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-
-              // Status badge (lock / cooldown)
-              if (badge != null) ...[
-                const SizedBox(height: 2),
-                Row(
+              Center(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(badge.$1, size: 15, color: _foregroundColor),
-                    const SizedBox(width: 2),
-                    Text(
-                      badge.$2,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: _foregroundColor,
-                      ),
-                    ),
+                    Icon(abilityIcon(type), size: 22, color: fg),
+                    _CardName(name: name, color: fg),
                   ],
                 ),
-              ],
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                child: Container(
+                  key: Key('card_count_${type.name}'),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: has ? AppTheme.kSurface : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: has ? color : fg,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  // ── Abbreviated name for compact button ─────────────────────────────────
-
-  String get _shortName {
-    // Use first word of the ability name so it fits in the compact button.
-    return name.split(' ').first;
   }
 }

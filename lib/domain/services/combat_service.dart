@@ -1,7 +1,7 @@
 /// Combat service for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// Resolves attacks between territories according to the combat resolution
-/// rules defined in the design document.
+/// Resolves attacks between neighbouring cities (with tanks and forests)
+/// and bomber raids.
 library;
 
 import 'dart:math';
@@ -14,9 +14,9 @@ import 'package:harita/domain/services/economy_service.dart';
 
 // ─── Exceptions ──────────────────────────────────────────────────────────────
 
-/// Thrown when an attack is invalid — e.g. territories are not adjacent,
+/// Thrown when an attack is invalid — e.g. the cities are not neighbours,
 /// the attacking army does not own the source, or the source lacks
-/// enough units to mount an attack.
+/// soldiers to send.
 class InvalidAttackException implements Exception {
   const InvalidAttackException(this.message);
 
@@ -27,24 +27,51 @@ class InvalidAttackException implements Exception {
   String toString() => 'InvalidAttackException: $message';
 }
 
+// ─── Strength helpers ────────────────────────────────────────────────────────
+
+/// Attack strength of [army] sending all but one soldier out of [source]:
+/// the soldiers plus [kTankPower] when a tank is ready to join.
+int attackStrength(Army army, Territory source) =>
+    max(0, source.unitCount - 1) + (army.tanksReady > 0 ? kTankPower : 0);
+
+/// Defence strength of [target]: its soldiers, [kForestDefenseBonus] more
+/// in a forest.
+int defenceStrength(Territory target) => target.hasForest
+    ? (target.unitCount * (1 + kForestDefenseBonus)).ceil()
+    : target.unitCount;
+
 // ─── Abstract interface ───────────────────────────────────────────────────────
 
-/// Resolves combat between two territories.
+/// Resolves combat between cities.
 abstract class CombatService {
-  /// Resolves an attack from [attackingArmyId] launching out of
-  /// [sourceTerritoryId] against [targetTerritoryId].
+  /// Sends all but one soldier from [sourceTerritoryId] into the neighbouring
+  /// [targetTerritoryId]. A ready tank joins (each tank once per turn).
   ///
-  /// Returns an updated [GameState] with all unit changes and any ownership
-  /// transfer applied atomically.
+  /// - Into an own city: the soldiers just move.
+  /// - Into any other city: the stronger side wins (see [attackStrength],
+  ///   [defenceStrength]) and keeps what is left after the other side's
+  ///   strength is taken off. The winner takes or keeps the city; a failed
+  ///   attack also loses the tank.
   ///
-  /// Throws [InvalidAttackException] when:
-  /// - [attackingArmyId] does not own the source territory.
-  /// - Source and target territories are not adjacent.
-  /// - The source territory has fewer than 2 units (must keep 1 behind).
+  /// Throws [InvalidAttackException] when [attackingArmyId] does not own the
+  /// source, the cities are not neighbours, or fewer than 2 soldiers are in
+  /// the source.
   GameState resolveAttack({
     required GameState state,
     required ArmyId attackingArmyId,
     required int sourceTerritoryId,
+    required int targetTerritoryId,
+  });
+
+  /// One bomber of [armyId] bombs [targetTerritoryId] (any city that is not
+  /// its own), destroying [kBomberDamage] soldiers. A city left without
+  /// soldiers becomes neutral.
+  ///
+  /// Throws [InvalidAttackException] when no bomber is ready this turn or
+  /// the target is the army's own city.
+  GameState bomberRaid({
+    required GameState state,
+    required ArmyId armyId,
     required int targetTerritoryId,
   });
 }
@@ -52,10 +79,6 @@ abstract class CombatService {
 // ─── Concrete implementation ──────────────────────────────────────────────────
 
 /// Default implementation of [CombatService].
-///
-/// Adjacency is verified from the live [GameState.territories] adjacency lists
-/// (not from the static [TerritoryGraph] template) so that hot-patch scenarios
-/// during tests are straightforward.
 class CombatServiceImpl implements CombatService {
   const CombatServiceImpl();
 
@@ -66,146 +89,122 @@ class CombatServiceImpl implements CombatService {
     required int sourceTerritoryId,
     required int targetTerritoryId,
   }) {
-    // ── Look up live territories ──────────────────────────────────────────
-    final source = _findTerritory(state, sourceTerritoryId, 'source');
-    final target = _findTerritory(state, targetTerritoryId, 'target');
+    final source = _find(state, sourceTerritoryId, 'source');
+    final target = _find(state, targetTerritoryId, 'target');
 
-    // ── Validation ────────────────────────────────────────────────────────
-
-    // 1. Attacking army must own the source territory.
     if (source.ownerArmyId != attackingArmyId) {
       throw InvalidAttackException(
-        'Army $attackingArmyId does not own source territory '
-        '$sourceTerritoryId (owner: ${source.ownerArmyId}).',
+        'Army $attackingArmyId does not own source city $sourceTerritoryId.',
       );
     }
-
-    // 2. Source and target must be adjacent.
     if (!source.adjacentIds.contains(targetTerritoryId)) {
       throw InvalidAttackException(
-        'Territory $sourceTerritoryId is not adjacent to territory '
-        '$targetTerritoryId.',
+        'City $sourceTerritoryId is not next to city $targetTerritoryId.',
       );
     }
-
-    // 3. Source must have at least 2 units (1 to attack, 1 to hold source).
     if (source.unitCount < 2) {
       throw InvalidAttackException(
-        'Territory $sourceTerritoryId has only ${source.unitCount} unit(s); '
-        'at least 2 are required to mount an attack.',
+        'City $sourceTerritoryId has only ${source.unitCount} soldier(s).',
       );
     }
 
     // ── Friendly move ─────────────────────────────────────────────────────
-    // Targeting a territory the attacker already owns moves units instead of
-    // fighting: all but 1 unit move, limited by the target's base capacity
-    // (Requirement 5.4). Units that do not fit stay at the source.
+    final moving = source.unitCount - 1;
     if (target.ownerArmyId == attackingArmyId) {
-      final movable = source.unitCount - 1;
-      final room = target.baseCapacity == null
-          ? movable
-          : max(0, target.baseCapacity! - target.unitCount);
-      final moved = min(movable, room);
-      if (moved <= 0) {
-        throw InvalidAttackException(
-          'Territory $targetTerritoryId is full (capacity '
-          '${target.baseCapacity}).',
-        );
-      }
       return _replace(
         state,
-        source.copyWith(unitCount: source.unitCount - moved),
-        target.copyWith(unitCount: target.unitCount + moved),
+        source.copyWith(unitCount: 1),
+        target.copyWith(unitCount: target.unitCount + moving),
       );
     }
 
-    // ── Combat resolution ─────────────────────────────────────────────────
+    // ── Battle ────────────────────────────────────────────────────────────
+    final army = state.army(attackingArmyId);
+    final attack = attackStrength(army, source);
+    final defence = defenceStrength(target);
 
-    // All units except 1 are committed to the attack.
-    final attackingUnits = source.unitCount - 1;
-    final defendingUnits = target.unitCount;
-
-    Territory updatedSource;
-    Territory updatedTarget;
-
-    if (attackingUnits > defendingUnits) {
-      // ── Attacker wins ──────────────────────────────────────────────────
-      // Attacker loses ceil(defendingUnits × kAttackerWinLossFraction).
-      final attackerLosses = (defendingUnits * kAttackerWinLossFraction).ceil();
-      final survivingAttackers = attackingUnits - attackerLosses;
-
-      // Determine new unit count for target, capped by base capacity.
-      final rawTargetUnits = survivingAttackers;
-      final cappedTargetUnits = _applyCapacity(target, rawTargetUnits);
-
-      // Source keeps the 1 unit held back plus any survivors that did not
-      // fit into the target's capacity.
-      updatedSource = source.copyWith(
-        unitCount: 1 + (rawTargetUnits - cappedTargetUnits),
+    if (attack > defence) {
+      // Soldier for soldier: what the defence cost is lost (the tank's
+      // strength counts too), the rest move in.
+      final survivors = (attack - defence).clamp(1, moving).toInt();
+      var next = _replace(
+        state,
+        source.copyWith(unitCount: 1),
+        target.copyWith(unitCount: survivors, ownerArmyId: attackingArmyId),
       );
-
-      // Transfer ownership: target now belongs to the attacker.
-      // If surviving attackers are somehow 0 (e.g. heavy losses), the
-      // territory still transfers but immediately becomes neutral per
-      // Property 7 (zero-units rule handled below).
-      final newOwner = cappedTargetUnits > 0 ? attackingArmyId : null;
-
-      updatedTarget = target.copyWith(
-        unitCount: cappedTargetUnits,
-        ownerArmyId: newOwner,
-      );
-    } else {
-      // ── Defender holds ────────────────────────────────────────────────
-      // Defender loses ceil(attackingUnits × kDefenderHoldLossFraction).
-      final defenderLosses = (attackingUnits * kDefenderHoldLossFraction)
-          .ceil();
-      final survivingDefenders = max(0, defendingUnits - defenderLosses);
-
-      // Attacker loses all attacking units; source keeps the 1 held back.
-      updatedSource = source.copyWith(unitCount: 1);
-
-      // Apply zero-unit ownership rule: if defender is wiped to 0,
-      // territory becomes neutral.
-      final defenderOwner = survivingDefenders > 0 ? target.ownerArmyId : null;
-
-      updatedTarget = target.copyWith(
-        unitCount: survivingDefenders,
-        ownerArmyId: defenderOwner,
-      );
+      if (army.tanksReady > 0) {
+        next = next.withArmy(army.copyWith(tanksUsed: army.tanksUsed + 1));
+      }
+      return awardMineRewards(state, next, attackingArmyId);
     }
 
-    // Conquering a diamond or gold mine pays out.
-    return awardMineRewards(
+    // Defender holds, losing as much as the attack was worth; the attackers
+    // (and their tank) are lost.
+    final factor = target.hasForest ? 1 + kForestDefenseBonus : 1.0;
+    final defenders = max(0, ((defence - attack) / factor).ceil());
+    var next = _replace(
       state,
-      _replace(state, updatedSource, updatedTarget),
-      attackingArmyId,
+      source.copyWith(unitCount: 1),
+      target.copyWith(
+        unitCount: defenders,
+        ownerArmyId: defenders > 0 ? target.ownerArmyId : null,
+      ),
     );
+    if (army.tanksReady > 0) {
+      next = next.withArmy(army.copyWith(tanks: army.tanks - 1));
+    }
+    return next;
   }
 
-  GameState _replace(GameState state, Territory source, Territory target) {
-    final updatedTerritories = [
+  @override
+  GameState bomberRaid({
+    required GameState state,
+    required ArmyId armyId,
+    required int targetTerritoryId,
+  }) {
+    final army = state.army(armyId);
+    if (army.bombersReady <= 0) {
+      throw const InvalidAttackException('No bomber is ready this turn.');
+    }
+    final target = _find(state, targetTerritoryId, 'target');
+    if (target.ownerArmyId == armyId) {
+      throw const InvalidAttackException('Bombers do not bomb own cities.');
+    }
+    final left = max(0, target.unitCount - kBomberDamage);
+    final territories = [
       for (final t in state.territories)
-        if (t.id == source.id) source else if (t.id == target.id) target else t,
+        if (t.id == target.id)
+          t.copyWith(
+            unitCount: left,
+            ownerArmyId: left > 0 ? t.ownerArmyId : null,
+          )
+        else
+          t,
     ];
-    return state.copyWith(territories: updatedTerritories);
+    return state
+        .withArmy(army.copyWith(bombersFlown: army.bombersFlown + 1))
+        .copyWith(territories: territories);
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
-  /// Finds a territory by [id] in the live [state]; throws
-  /// [InvalidAttackException] if no territory with that id exists.
-  Territory _findTerritory(GameState state, int id, String role) {
+  GameState _replace(GameState state, Territory source, Territory target) {
+    final updated = [
+      for (final t in state.territories)
+        if (t.id == source.id) source else if (t.id == target.id) target else t,
+    ];
+    return state.copyWith(territories: updated);
+  }
+
+  Territory _find(GameState state, int id, String role) {
+    if (id >= 0 &&
+        id < state.territories.length &&
+        state.territories[id].id == id) {
+      return state.territories[id];
+    }
     for (final t in state.territories) {
       if (t.id == id) return t;
     }
-    throw InvalidAttackException('No $role territory found with id $id.');
-  }
-
-  /// Caps [units] at the territory's [baseCapacity] if one is set.
-  /// For [TerritoryType.normal] territories (no capacity), returns [units]
-  /// unchanged.
-  int _applyCapacity(Territory territory, int units) {
-    if (territory.baseCapacity == null) return units;
-    return min(units, territory.baseCapacity!);
+    throw InvalidAttackException('No $role city with id $id.');
   }
 }

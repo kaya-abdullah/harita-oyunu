@@ -36,7 +36,7 @@ Color _color(AiDifficulty d) => switch (d) {
 };
 
 /// The choices made in the new-game picker.
-typedef NewGameChoice = ({AiDifficulty difficulty, int bots});
+typedef NewGameChoice = ({AiDifficulty difficulty, int bots, int humans});
 
 /// Shows the new-game picker: first the number of bots (1 … [kMaxBots],
 /// starting at [initialBots]), then "Çok Kolay / Orta / Zor" as three big
@@ -45,9 +45,10 @@ typedef NewGameChoice = ({AiDifficulty difficulty, int bots});
 Future<NewGameChoice?> showNewGamePicker(
   BuildContext context,
   AppStrings strings, {
-  int initialBots = 1,
+  NewGameChoice? initial,
 }) {
-  var bots = initialBots.clamp(1, kMaxBots);
+  var bots = (initial?.bots ?? 5).clamp(1, kMaxBots);
+  var humans = (initial?.humans ?? 1).clamp(1, kMaxHumans);
   return showDialog<NewGameChoice>(
     context: context,
     builder: (ctx) => StatefulBuilder(
@@ -55,7 +56,7 @@ Future<NewGameChoice?> showNewGamePicker(
         backgroundColor: AppTheme.kBackground,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         title: Text(
-          strings.botCountTitle,
+          strings.btnNewGame,
           textAlign: TextAlign.center,
           style: AppTheme.labelStyle.copyWith(color: AppTheme.kTextDark),
         ),
@@ -64,6 +65,41 @@ Future<NewGameChoice?> showNewGamePicker(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // ── Players on this phone ─────────────────────────────────
+              Text(
+                strings.playersTitle,
+                textAlign: TextAlign.center,
+                style: AppTheme.labelStyle.copyWith(
+                  color: AppTheme.kTextDark,
+                  fontSize: 18,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  for (var n = 1; n <= kMaxHumans; n++) ...[
+                    if (n > 1) const SizedBox(width: 8),
+                    Expanded(
+                      child: _ChoiceButton(
+                        key: Key('humans_$n'),
+                        label: n == 1 ? strings.playersOne : strings.playersTwo,
+                        selected: n == humans,
+                        onTap: () => setState(() => humans = n),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                strings.botCountTitle,
+                textAlign: TextAlign.center,
+                style: AppTheme.labelStyle.copyWith(
+                  color: AppTheme.kTextDark,
+                  fontSize: 18,
+                ),
+              ),
+              const SizedBox(height: 8),
               // ── Bot count ─────────────────────────────────────────────
               Wrap(
                 alignment: WrapAlignment.center,
@@ -84,7 +120,7 @@ Future<NewGameChoice?> showNewGamePicker(
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (final id in ArmyId.values.take(bots + 1))
+                  for (final id in ArmyId.values.take(bots + humans))
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 3),
                       child: CircleAvatar(
@@ -113,8 +149,9 @@ Future<NewGameChoice?> showNewGamePicker(
                   title: difficultyName(d, strings),
                   description: _description(d, strings),
                   color: _color(d),
-                  onTap: () =>
-                      Navigator.of(ctx).pop((difficulty: d, bots: bots)),
+                  onTap: () => Navigator.of(
+                    ctx,
+                  ).pop((difficulty: d, bots: bots, humans: humans)),
                 ),
                 const SizedBox(height: 12),
               ],
@@ -124,6 +161,44 @@ Future<NewGameChoice?> showNewGamePicker(
       ),
     ),
   );
+}
+
+class _ChoiceButton extends StatelessWidget {
+  const _ChoiceButton({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? AppTheme.army1Primary : AppTheme.kNeutralLight,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: SizedBox(
+          height: 48,
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: selected ? AppTheme.kTextLight : AppTheme.kTextDark,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _BotCountButton extends StatelessWidget {
@@ -147,8 +222,8 @@ class _BotCountButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         onTap: onTap,
         child: SizedBox(
-          width: 48,
-          height: 48,
+          width: 44,
+          height: 44,
           child: Center(
             child: Text(
               '$count',

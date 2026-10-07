@@ -88,32 +88,55 @@ class AppStrings {
   String get appName => _t('app_name');
   String get resourceName => _t('resource_name');
 
-  // ── Ability names ────────────────────────────────────────────────────────
+  // ── Cards ────────────────────────────────────────────────────────────────
   String get abilityFireBomb => _t('ability_fire_bomb');
   String get abilityBombardment => _t('ability_bombardment');
   String get abilitySoldierSpell => _t('ability_soldier_spell');
   String get abilityMegaBomba => _t('ability_mega_bomba');
-
-  /// e.g. `strings.abilityLocked(turn: '10')`
-  String abilityLocked({required String turn}) =>
-      _t('ability_locked', p: {'turn': turn});
-
-  // ── Tooltips ─────────────────────────────────────────────────────────────
+  String get abilityAtomBomb => _t('ability_atom_bomb');
+  String get abilityNuclearBomb => _t('ability_nuclear_bomb');
+  String get abilityTribute => _t('ability_tribute');
   String get tooltipFireBomb => _t('tooltip_fire_bomb');
   String get tooltipBombardment => _t('tooltip_bombardment');
   String get tooltipSoldierSpell => _t('tooltip_soldier_spell');
   String get tooltipMegaBomba => _t('tooltip_mega_bomba');
+  String get tooltipAtomBomb => _t('tooltip_atom_bomb');
+  String get tooltipNuclearBomb => _t('tooltip_nuclear_bomb');
+  String get tooltipTribute => _t('tooltip_tribute');
+  String get cardsTitle => _t('cards_title');
+
+  /// e.g. `strings.cardDrawn(card: 'Atom Bombası')`
+  String cardDrawn({required String card}) =>
+      _t('card_drawn', p: {'card': card});
+  String get cardAlreadyDrawn => _t('card_already_drawn');
+
+  /// e.g. `strings.abilitySelectTarget(ability: 'Fire Bomb')`
+  String abilitySelectTarget({required String ability}) =>
+      _t('ability_select_target', p: {'ability': ability});
+
+  /// e.g. `strings.abilityUsed(ability: 'Fire Bomb')`
+  String abilityUsed({required String ability}) =>
+      _t('ability_used', p: {'ability': ability});
+
+  /// e.g. `strings.tributeTaken(count: '200')`
+  String tributeTaken({required String count}) =>
+      _t('tribute_taken', p: {'count': count});
+
+  // ── Bombers ──────────────────────────────────────────────────────────────
+  String get bomberArmed => _t('bomber_armed');
+
+  /// e.g. `strings.bomberHit(count: '15')`
+  String bomberHit({required String count}) =>
+      _t('bomber_hit', p: {'count': count});
+  String get noBomber => _t('no_bomber');
+  String get invalidBomberTarget => _t('invalid_bomber_target');
 
   // ── Errors ───────────────────────────────────────────────────────────────
   String get errorInsufficientDiamonds => _t('error_insufficient_diamonds');
-  String get errorAbilityLocked => _t('error_ability_locked');
-
-  /// e.g. `strings.errorCooldownActive(turns: '2')`
-  String errorCooldownActive({required String turns}) =>
-      _t('error_cooldown_active', p: {'turns': turns});
-
+  String get errorNoCard => _t('error_no_card');
   String get errorInvalidAttack => _t('error_invalid_attack');
   String get errorNotYourTurn => _t('error_not_your_turn');
+  String get errorInvalidTarget => _t('error_invalid_target');
 
   // ── Victory ──────────────────────────────────────────────────────────────
   /// e.g. `strings.victoryTitle(army: 'Army 1')`
@@ -125,6 +148,9 @@ class AppStrings {
       _t('victory_turns', p: {'turn': turn});
 
   String get victorySubtitle => _t('victory_subtitle');
+  String get defeatTitle => _t('defeat_title');
+  String defeatSubtitle(String army) =>
+      _t('defeat_subtitle', p: {'army': army});
 
   // ── Buttons ──────────────────────────────────────────────────────────────
   String get btnNewGame => _t('btn_new_game');
@@ -137,33 +163,58 @@ class AppStrings {
   String get btnBack => _t('btn_back');
   String get btnConfirm => _t('btn_confirm');
   String get btnCancel => _t('btn_cancel');
+  String get btnAttack => _t('btn_attack');
+  String get btnDrawCard => _t('btn_draw_card');
+  String get btnBomber => _t('btn_bomber');
+  String get btnStart => _t('btn_start');
 
-  // ── Territory info ───────────────────────────────────────────────────────
+  // ── City info ────────────────────────────────────────────────────────────
   String get territoryOwnerLabel => _t('territory_owner_label');
   String get territoryUnitsLabel => _t('territory_units_label');
   String get territoryAdjacentLabel => _t('territory_adjacent_label');
   String get territoryOwnerNeutral => _t('territory_owner_neutral');
+  String get diamondMineLabel => _t('diamond_mine_label');
+  String get goldMineLabel => _t('gold_mine_label');
+  String get forestLabel => _t('forest_label');
+  String get strengthLabel => _t('strength_label');
+
+  /// e.g. `strings.diamondMineCaptured(count: '250')`
+  String diamondMineCaptured({required String count}) =>
+      _t('diamond_mine_captured', p: {'count': count});
+
+  /// e.g. `strings.goldMineCaptured(count: '150')`
+  String goldMineCaptured({required String count}) =>
+      _t('gold_mine_captured', p: {'count': count});
 
   // ── HUD ──────────────────────────────────────────────────────────────────
   String get turnLabel => _t('turn_label');
   String get activeArmyLabel => _t('active_army_label');
   String get diamondBalanceLabel => _t('diamond_balance_label');
+  String get citiesLabel => _t('cities_label');
+  String get tanksLabel => _t('tanks_label');
+  String get bombersLabel => _t('bombers_label');
+  String get youLabel => _t('you_label');
+  String get aiThinking => _t('ai_thinking');
 
   // ── Shop ─────────────────────────────────────────────────────────────────
   String get shopTitle => _t('shop_title');
   String get shopBuy => _t('shop_buy');
   String get shopReadOnly => _t('shop_read_only');
-  String get shopCostLabel => _t('shop_cost_label');
-  String get shopEmpty => _t('shop_empty');
+  String get shopTankDesc => _t('shop_tank_desc');
+  String get shopBomberDesc => _t('shop_bomber_desc');
+  String get purchased => _t('purchased');
 
-  // ── Army names ───────────────────────────────────────────────────────────
-  String get army1Name => _t('army_1_name');
-  String get army2Name => _t('army_2_name');
-
-  /// Display name of the army with [index] (0 = the player, 1 … 6 = bots),
-  /// e.g. "Mavi Ordu".
+  // ── Armies and players ───────────────────────────────────────────────────
+  /// Display name of the army with [index] (0 … 11), e.g. "Mavi Ordu".
   String armyName(int index) => _t('army_${index + 1}_name');
   String get armyNeutral => _t('army_neutral');
+
+  /// e.g. "Oyuncu 2".
+  String playerName(int number) => _t('player_name', p: {'n': '$number'});
+
+  /// e.g. `strings.nextPlayer(player: 'Oyuncu 2')`
+  String nextPlayer({required String player}) =>
+      _t('next_player', p: {'player': player});
 
   // ── Tutorial ─────────────────────────────────────────────────────────────
   String get tutorialSkip => _t('tutorial_skip');
@@ -178,58 +229,18 @@ class AppStrings {
   String get tutorialStepVictory => _t('tutorial_step_victory');
 
   // ── Gameplay feedback ────────────────────────────────────────────────────
-  String get btnAttack => _t('btn_attack');
   String get hintSelectTerritory => _t('hint_select_territory');
   String get hintAttack => _t('hint_attack');
-  String get errorAbilityNotReady => _t('error_ability_not_ready');
-  String get errorInvalidTarget => _t('error_invalid_target');
   String get attackWon => _t('attack_won');
   String get attackLost => _t('attack_lost');
-  String get aiThinking => _t('ai_thinking');
-
-  /// e.g. `strings.abilitySelectTarget(ability: 'Fire Bomb')`
-  String abilitySelectTarget({required String ability}) =>
-      _t('ability_select_target', p: {'ability': ability});
-
-  /// e.g. `strings.abilityUsed(ability: 'Fire Bomb')`
-  String abilityUsed({required String ability}) =>
-      _t('ability_used', p: {'ability': ability});
-
-  String get cannotDeploy => _t('cannot_deploy');
+  String get attackLostTank => _t('attack_lost_tank');
   String get unitsMoved => _t('units_moved');
-  String get shopItemDesc => _t('shop_item_desc');
-  String get reserveLabel => _t('reserve_label');
 
-  /// e.g. `strings.btnDeploy(count: '3')`
-  String btnDeploy({required String count}) =>
-      _t('btn_deploy', p: {'count': count});
-
-  /// e.g. `strings.unitsDeployed(count: '3')`
-  String unitsDeployed({required String count}) =>
-      _t('units_deployed', p: {'count': count});
-
-  /// e.g. `strings.diamondMineCaptured(count: '250')`
-  String diamondMineCaptured({required String count}) =>
-      _t('diamond_mine_captured', p: {'count': count});
-
-  String get diamondMineLabel => _t('diamond_mine_label');
-
-  /// e.g. `strings.goldMineCaptured(count: '150')`
-  String goldMineCaptured({required String count}) =>
-      _t('gold_mine_captured', p: {'count': count});
-  String get goldMineLabel => _t('gold_mine_label');
-  String get terrainLabel => _t('terrain_label');
-
-  /// Name of a terrain, e.g. `strings.terrainName('rainforest')`.
-  String terrainName(String terrain) => _t('terrain_$terrain');
+  // ── New game ─────────────────────────────────────────────────────────────
   String get botCountTitle => _t('bot_count_title');
-  String get btnStart => _t('btn_start');
-  String get youLabel => _t('you_label');
-  String get defeatTitle => _t('defeat_title');
-  String defeatSubtitle(String army) =>
-      _t('defeat_subtitle', p: {'army': army});
-
-  // ── Bot difficulty ──────────────────────────────────────────────────────
+  String get playersTitle => _t('players_title');
+  String get playersOne => _t('players_one');
+  String get playersTwo => _t('players_two');
   String get difficultyTitle => _t('difficulty_title');
   String get difficultyVeryEasy => _t('difficulty_very_easy');
   String get difficultyMedium => _t('difficulty_medium');
@@ -238,7 +249,9 @@ class AppStrings {
   String get difficultyMediumDesc => _t('difficulty_medium_desc');
   String get difficultyHardDesc => _t('difficulty_hard_desc');
   String get difficultyLabel => _t('difficulty_label');
-  String get tilesLabel => _t('tiles_label');
+
+  /// Language code of the bound locale (`tr` / `en`), e.g. for city names.
+  String get languageCode => _locale.languageCode;
 
   /// Looks up an arbitrary [key] (e.g. a shop item `nameKey`) with the
   /// standard fallback chain.

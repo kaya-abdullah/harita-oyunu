@@ -5,16 +5,18 @@ import 'package:harita/domain/models/special_ability.dart';
 
 // ─── WeaponItem ──────────────────────────────────────────────────────────────
 
-/// An item available for purchase in the Weapon Shop.
+/// An item for sale in the Weapon Shop: one card, a tank or a bomber.
+/// Everything is on sale from the first turn.
 ///
-/// Immutable by design — mutating state is done via [copyWith].
+/// Immutable by design.
 class WeaponItem {
   const WeaponItem({
     required this.id,
     required this.nameKey,
     required this.diamondCost,
-    required this.unlockTurn,
-    this.requiredAbility,
+    this.card,
+    this.tanks = 0,
+    this.bombers = 0,
   });
 
   /// Unique string identifier for this item (used as a stable key).
@@ -23,35 +25,17 @@ class WeaponItem {
   /// Locale key used to look up the display name.
   final String nameKey;
 
-  /// diamonds cost to purchase this item.
+  /// Diamonds cost to purchase this item.
   final int diamondCost;
 
-  /// The earliest turn at which this item appears in the shop.
-  final int unlockTurn;
+  /// The card this item adds to the buyer's hand, if any.
+  final AbilityType? card;
 
-  /// An ability that must be unlocked before this item can be purchased.
-  /// `null` means no ability prerequisite.
-  final AbilityType? requiredAbility;
+  /// Tanks this item adds.
+  final int tanks;
 
-  // ─── copyWith ─────────────────────────────────────────────────────────────
-
-  WeaponItem copyWith({
-    String? id,
-    String? nameKey,
-    int? diamondCost,
-    int? unlockTurn,
-    Object? requiredAbility = _sentinel,
-  }) {
-    return WeaponItem(
-      id: id ?? this.id,
-      nameKey: nameKey ?? this.nameKey,
-      diamondCost: diamondCost ?? this.diamondCost,
-      unlockTurn: unlockTurn ?? this.unlockTurn,
-      requiredAbility: requiredAbility == _sentinel
-          ? this.requiredAbility
-          : requiredAbility as AbilityType?,
-    );
-  }
+  /// Bombers this item adds.
+  final int bombers;
 
   // ─── Equality ─────────────────────────────────────────────────────────────
 
@@ -62,20 +46,15 @@ class WeaponItem {
     return id == other.id &&
         nameKey == other.nameKey &&
         diamondCost == other.diamondCost &&
-        unlockTurn == other.unlockTurn &&
-        requiredAbility == other.requiredAbility;
+        card == other.card &&
+        tanks == other.tanks &&
+        bombers == other.bombers;
   }
 
   @override
   int get hashCode =>
-      Object.hash(id, nameKey, diamondCost, unlockTurn, requiredAbility);
+      Object.hash(id, nameKey, diamondCost, card, tanks, bombers);
 
   @override
-  String toString() =>
-      'WeaponItem(id: $id, cost: $diamondCost diamonds, unlockTurn: $unlockTurn, '
-      'requiredAbility: $requiredAbility)';
+  String toString() => 'WeaponItem(id: $id, cost: $diamondCost diamonds)';
 }
-
-// ─── Internal helpers ────────────────────────────────────────────────────────
-
-const Object _sentinel = Object();

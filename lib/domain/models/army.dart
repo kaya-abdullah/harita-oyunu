@@ -2,33 +2,25 @@
 library;
 
 import 'package:harita/domain/models/special_ability.dart';
-import 'package:harita/domain/models/weapon_item.dart';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
-/// Identifies an army. [army1] is the human player; [army2] … [army7] are
-/// the bots (up to [kMaxBots]), in turn order.
+/// Identifies an army, in turn order. [army1] is always a human player;
+/// in a two-player game [army2] is the second human. The others are bots
+/// (up to [kMaxBots]).
 enum ArmyId {
-  /// The human player (blue).
   army1,
-
-  /// Bot 1 (red).
   army2,
-
-  /// Bot 2.
   army3,
-
-  /// Bot 3.
   army4,
-
-  /// Bot 4.
   army5,
-
-  /// Bot 5.
   army6,
-
-  /// Bot 6.
   army7,
+  army8,
+  army9,
+  army10,
+  army11,
+  army12,
 }
 
 /// Specifies whether the army is controlled by a human or the AI.
@@ -46,14 +38,20 @@ enum ArmyKind {
 ///
 /// Immutable by design — mutating state is done via [copyWith].
 class Army {
-  const Army({
+  Army({
     required this.id,
     required this.kind,
     required this.diamondBalance,
-    required this.totalUnitPool,
-    required this.abilities,
-    required this.inventory,
-  });
+    Map<AbilityType, int> cards = const {},
+    this.tanks = 0,
+    this.bombers = 0,
+    this.bombersFlown = 0,
+    this.tanksUsed = 0,
+    this.hasDrawnCard = false,
+  }) : cards = Map.unmodifiable({
+         for (final e in cards.entries)
+           if (e.value > 0) e.key: e.value,
+       });
 
   /// Which army this is.
   final ArmyId id;
@@ -64,16 +62,39 @@ class Army {
   /// Current diamond (Elmas) balance.
   final int diamondBalance;
 
-  /// Undeployed soldier units available to place on territories.
-  final int totalUnitPool;
+  /// Cards in hand: how many of each (types with none are left out).
+  final Map<AbilityType, int> cards;
 
-  /// Runtime state for each of the special abilities.
-  ///
-  /// The map is stored as an unmodifiable view to prevent accidental mutation.
-  final Map<AbilityType, AbilityState> abilities;
+  /// Tanks. Each joins one attack per turn (see [kTankPower]).
+  final int tanks;
 
-  /// Items purchased from the Weapon Shop.
-  final List<WeaponItem> inventory;
+  /// Tanks that already joined an attack this turn.
+  final int tanksUsed;
+
+  /// Bombers. Each flies one raid per turn (see [kBomberDamage]).
+  final int bombers;
+
+  /// Bombers that already flew this turn.
+  final int bombersFlown;
+
+  /// Whether the free card of this turn ("Kart Çek") was drawn.
+  final bool hasDrawnCard;
+
+  /// Number of [type] cards in hand.
+  int cardCount(AbilityType type) => cards[type] ?? 0;
+
+  /// Bombers that can still fly this turn.
+  int get bombersReady => bombers - bombersFlown;
+
+  /// Tanks that can still join an attack this turn.
+  int get tanksReady => tanks - tanksUsed;
+
+  /// Whether this army is played by a person.
+  bool get isHuman => kind == ArmyKind.human;
+
+  /// Returns a copy with [delta] more (or fewer) [type] cards.
+  Army withCard(AbilityType type, int delta) =>
+      copyWith(cards: {...cards, type: cardCount(type) + delta});
 
   // ─── copyWith ─────────────────────────────────────────────────────────────
 
@@ -81,18 +102,23 @@ class Army {
     ArmyId? id,
     ArmyKind? kind,
     int? diamondBalance,
-    int? totalUnitPool,
-    Map<AbilityType, AbilityState>? abilities,
-    List<WeaponItem>? inventory,
+    Map<AbilityType, int>? cards,
+    int? tanks,
+    int? bombers,
+    int? bombersFlown,
+    int? tanksUsed,
+    bool? hasDrawnCard,
   }) {
     return Army(
       id: id ?? this.id,
       kind: kind ?? this.kind,
       diamondBalance: diamondBalance ?? this.diamondBalance,
-      totalUnitPool: totalUnitPool ?? this.totalUnitPool,
-      // Wrap in an unmodifiable map so callers cannot mutate through the copy.
-      abilities: Map.unmodifiable(abilities ?? this.abilities),
-      inventory: List.unmodifiable(inventory ?? this.inventory),
+      cards: cards ?? this.cards,
+      tanks: tanks ?? this.tanks,
+      bombers: bombers ?? this.bombers,
+      bombersFlown: bombersFlown ?? this.bombersFlown,
+      tanksUsed: tanksUsed ?? this.tanksUsed,
+      hasDrawnCard: hasDrawnCard ?? this.hasDrawnCard,
     );
   }
 
@@ -105,9 +131,12 @@ class Army {
     return id == other.id &&
         kind == other.kind &&
         diamondBalance == other.diamondBalance &&
-        totalUnitPool == other.totalUnitPool &&
-        _mapEquals(abilities, other.abilities) &&
-        _listEquals(inventory, other.inventory);
+        _mapEquals(cards, other.cards) &&
+        tanks == other.tanks &&
+        bombers == other.bombers &&
+        bombersFlown == other.bombersFlown &&
+        tanksUsed == other.tanksUsed &&
+        hasDrawnCard == other.hasDrawnCard;
   }
 
   @override
@@ -115,15 +144,20 @@ class Army {
     id,
     kind,
     diamondBalance,
-    totalUnitPool,
-    Object.hashAll(abilities.entries.map((e) => Object.hash(e.key, e.value))),
-    Object.hashAll(inventory),
+    Object.hashAllUnordered(
+      cards.entries.map((e) => Object.hash(e.key, e.value)),
+    ),
+    tanks,
+    bombers,
+    bombersFlown,
+    tanksUsed,
+    hasDrawnCard,
   );
 
   @override
   String toString() =>
       'Army(id: $id, kind: $kind, diamonds: $diamondBalance, '
-      'unitPool: $totalUnitPool, inventorySize: ${inventory.length})';
+      'cards: $cards, tanks: $tanks, bombers: $bombers)';
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -132,14 +166,6 @@ bool _mapEquals<K, V>(Map<K, V> a, Map<K, V> b) {
   if (a.length != b.length) return false;
   for (final entry in a.entries) {
     if (!b.containsKey(entry.key) || b[entry.key] != entry.value) return false;
-  }
-  return true;
-}
-
-bool _listEquals<T>(List<T> a, List<T> b) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
   }
   return true;
 }

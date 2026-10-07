@@ -1,13 +1,13 @@
 /// Economy service for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// Handles per-turn income, weapon shop purchases, and shop item eligibility.
+/// Handles per-turn income, city growth and the Weapon Shop.
 library;
 
 import 'package:harita/core/constants.dart';
+import 'package:harita/domain/models/ai_difficulty.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
-import 'package:harita/domain/models/territory.dart';
 import 'package:harita/domain/models/weapon_item.dart';
 
 // ─── Exceptions ──────────────────────────────────────────────────────────────
@@ -32,125 +32,116 @@ class InsufficientDiamondsException implements Exception {
   @override
   String toString() =>
       'InsufficientDiamondsException: cannot purchase "$itemId" — '
-      'requires $requiredDiamonds diamonds but army only has $availableDiamonds.';
+      'requires $requiredDiamonds diamonds but army only has '
+      '$availableDiamonds.';
 }
 
 // ─── Weapon catalog ──────────────────────────────────────────────────────────
 
-/// The complete catalog of items available in the Weapon Shop.
-///
-/// `getEligibleShopItems` filters this list based on current turn and army
-/// ability state.
+/// Everything for sale in the Weapon Shop — all of it from the first turn
+/// ("oyuna girdiğimiz gibi yazsın"): every card, tanks and bombers.
 const List<WeaponItem> kWeaponCatalog = [
   WeaponItem(
-    id: 'fire_bomb_pack',
-    nameKey: 'shop_item_fire_bomb_pack',
+    id: 'fire_bomb',
+    nameKey: 'ability_fire_bomb',
     diamondCost: 220,
-    unlockTurn: 0,
-    requiredAbility: null,
+    card: AbilityType.fireBomb,
   ),
   WeaponItem(
-    id: 'bombardment_pack',
-    nameKey: 'shop_item_bombardment_pack',
+    id: 'bombardment',
+    nameKey: 'ability_bombardment',
     diamondCost: 300,
-    unlockTurn: kTurnUnlockBombardment, // 10
-    requiredAbility: AbilityType.bombardment,
+    card: AbilityType.bombardment,
   ),
   WeaponItem(
-    id: 'soldier_spell_pack',
-    nameKey: 'shop_item_soldier_spell_pack',
+    id: 'soldier_spell',
+    nameKey: 'ability_soldier_spell',
     diamondCost: 250,
-    unlockTurn: kTurnUnlockSoldierSpell, // 12
-    requiredAbility: AbilityType.soldierSpell,
+    card: AbilityType.soldierSpell,
   ),
   WeaponItem(
-    id: 'mega_bomba_pack',
-    nameKey: 'shop_item_mega_bomba_pack',
+    id: 'mega_bomba',
+    nameKey: 'ability_mega_bomba',
     diamondCost: 500,
-    unlockTurn: kTurnUnlockMegaBomba, // 45
-    requiredAbility: AbilityType.megaBomba,
+    card: AbilityType.megaBomba,
+  ),
+  WeaponItem(
+    id: 'atom_bomb',
+    nameKey: 'ability_atom_bomb',
+    diamondCost: 700,
+    card: AbilityType.atomBomb,
+  ),
+  WeaponItem(
+    id: 'nuclear_bomb',
+    nameKey: 'ability_nuclear_bomb',
+    diamondCost: 1000,
+    card: AbilityType.nuclearBomb,
+  ),
+  WeaponItem(
+    id: 'tribute',
+    nameKey: 'ability_tribute',
+    diamondCost: 250,
+    card: AbilityType.tribute,
+  ),
+  WeaponItem(id: 'tank', nameKey: 'shop_item_tank', diamondCost: 200, tanks: 1),
+  WeaponItem(
+    id: 'bomber',
+    nameKey: 'shop_item_bomber',
+    diamondCost: 350,
+    bombers: 1,
   ),
 ];
 
+/// Soldiers each city of [army] gains at the end of its turn: bots grow
+/// faster on "Zor" and slower on "Çok Kolay".
+int cityGrowthFor(Army army, AiDifficulty difficulty) {
+  if (army.isHuman) return kCityGrowth;
+  return switch (difficulty) {
+    AiDifficulty.veryEasy => kVeryEasyCityGrowth,
+    AiDifficulty.medium => kCityGrowth,
+    AiDifficulty.hard => kHardCityGrowth,
+  };
+}
+
 // ─── Abstract interface ───────────────────────────────────────────────────────
 
-/// Handles all resource-economy operations for a single army.
+/// Handles all resource-economy operations.
 abstract class EconomyService {
-  /// Applies per-turn resource generation to [army] based on its land in
-  /// [territories].
-  ///
-  /// - Adds [kDiamondsPerTurn] (80) diamonds.
-  /// - Adds [kSoldiersPerTurn] (3) soldier units plus one per
-  ///   [kTilesPerBonusSoldier] owned tiles (and [bonusSoldiers]) to
-  ///   [army.totalUnitPool].
-  ///
-  /// Returns a new [Army] copy; the original is never mutated.
-  Army applyTurnIncome(
-    Army army,
-    List<Territory> territories, {
-    int bonusSoldiers = 0,
-  });
+  /// End-of-turn income of [armyId]: [kDiamondsPerTurn] diamonds and
+  /// [cityGrowthFor] soldiers in each of its cities.
+  GameState applyTurnIncome(GameState state, ArmyId armyId);
 
-  /// Attempts to purchase [item] for [army].
-  ///
-  /// On success, returns a new [Army] with:
-  /// - `diamondBalance` decreased by `item.diamondCost`
-  /// - [item] appended to `inventory`
-  ///
-  /// Throws [InsufficientDiamondsException] if `army.diamondBalance < item.diamondCost`.
-  /// The original [army] is never mutated regardless of outcome.
+  /// Buys [item] for [army]: pays its cost and adds the card, tank or
+  /// bomber. Throws [InsufficientDiamondsException] when it cannot pay.
   Army purchaseItem(Army army, WeaponItem item);
 
-  /// Returns items from the catalog that [army] is eligible to purchase
-  /// given [currentTurn] and the army's current ability states.
-  ///
-  /// An item is eligible when ALL of the following hold:
-  /// 1. `item.unlockTurn <= currentTurn`
-  /// 2. If `item.requiredAbility != null`, that ability is unlocked in [army].
-  List<WeaponItem> getEligibleShopItems(Army army, int currentTurn);
-
-  /// Moves up to [count] units (default: all) from [armyId]'s undeployed
-  /// `totalUnitPool` onto its own territory [territoryId], respecting base
-  /// capacity (Requirement 5.4). Returns [state] unchanged when nothing can
-  /// be deployed (not owned, empty pool, or base full).
-  GameState deployUnits(
-    GameState state,
-    ArmyId armyId,
-    int territoryId, {
-    int? count,
-  });
+  /// Everything for sale (the whole [kWeaponCatalog]).
+  List<WeaponItem> getShopItems();
 }
 
 // ─── Concrete implementation ─────────────────────────────────────────────────
 
 /// Default implementation of [EconomyService].
-///
-/// Uses [kWeaponCatalog] as the shop item source.  All methods are pure
-/// functions that return new model copies without mutating their inputs.
 class EconomyServiceImpl implements EconomyService {
   const EconomyServiceImpl();
 
-  // ─── applyTurnIncome ────────────────────────────────────────────────────
-
   @override
-  Army applyTurnIncome(
-    Army army,
-    List<Territory> territories, {
-    int bonusSoldiers = 0,
-  }) {
-    final ownedTiles = territories.where((t) => t.ownerArmyId == army.id);
-    final soldiers =
-        kSoldiersPerTurn +
-        ownedTiles.length ~/ kTilesPerBonusSoldier +
-        bonusSoldiers;
-
-    return army.copyWith(
-      diamondBalance: army.diamondBalance + kDiamondsPerTurn,
-      totalUnitPool: army.totalUnitPool + soldiers,
-    );
+  GameState applyTurnIncome(GameState state, ArmyId armyId) {
+    final army = state.army(armyId);
+    final growth = cityGrowthFor(army, state.difficulty);
+    return state
+        .withArmy(
+          army.copyWith(diamondBalance: army.diamondBalance + kDiamondsPerTurn),
+        )
+        .copyWith(
+          territories: [
+            for (final t in state.territories)
+              t.ownerArmyId == armyId
+                  ? t.copyWith(unitCount: t.unitCount + growth)
+                  : t,
+          ],
+        );
   }
-
-  // ─── purchaseItem ────────────────────────────────────────────────────────
 
   @override
   Army purchaseItem(Army army, WeaponItem item) {
@@ -161,64 +152,18 @@ class EconomyServiceImpl implements EconomyService {
         itemId: item.id,
       );
     }
-
-    return army.copyWith(
+    var bought = army.copyWith(
       diamondBalance: army.diamondBalance - item.diamondCost,
-      inventory: [...army.inventory, item],
+      tanks: army.tanks + item.tanks,
+      bombers: army.bombers + item.bombers,
     );
+    final card = item.card;
+    if (card != null) bought = bought.withCard(card, 1);
+    return bought;
   }
-
-  // ─── deployUnits ───────────────────────────────────────────────────────
 
   @override
-  GameState deployUnits(
-    GameState state,
-    ArmyId armyId,
-    int territoryId, {
-    int? count,
-  }) {
-    final army = state.army(armyId);
-    final index = state.territories.indexWhere((t) => t.id == territoryId);
-    if (index < 0) return state;
-    final territory = state.territories[index];
-    if (territory.ownerArmyId != armyId) return state;
-
-    var amount = count ?? army.totalUnitPool;
-    if (amount > army.totalUnitPool) amount = army.totalUnitPool;
-    final cap = territory.baseCapacity;
-    if (cap != null && territory.unitCount + amount > cap) {
-      amount = cap - territory.unitCount;
-    }
-    if (amount <= 0) return state;
-
-    final territories = [...state.territories];
-    territories[index] = territory.copyWith(
-      unitCount: territory.unitCount + amount,
-    );
-    final updatedArmy = army.copyWith(
-      totalUnitPool: army.totalUnitPool - amount,
-    );
-    return state.withArmy(updatedArmy).copyWith(territories: territories);
-  }
-
-  // ─── getEligibleShopItems ─────────────────────────────────────────────────
-
-  @override
-  List<WeaponItem> getEligibleShopItems(Army army, int currentTurn) {
-    return kWeaponCatalog.where((item) {
-      // 1. Turn threshold must be met.
-      if (item.unlockTurn > currentTurn) return false;
-
-      // 2. Required ability (if any) must be unlocked.
-      final requiredAbility = item.requiredAbility;
-      if (requiredAbility != null) {
-        final abilityState = army.abilities[requiredAbility];
-        if (abilityState == null || !abilityState.isUnlocked) return false;
-      }
-
-      return true;
-    }).toList();
-  }
+  List<WeaponItem> getShopItems() => kWeaponCatalog;
 }
 
 // ─── Diamond and gold mines ──────────────────────────────────────────────────
@@ -244,7 +189,7 @@ class EconomyServiceImpl implements EconomyService {
 }
 
 /// Pays [armyId] [kDiamondMineReward] diamonds for every diamond mine and
-/// [kGoldMineReward] for every gold mine (base) it just captured.
+/// [kGoldMineReward] for every gold mine it just captured.
 GameState awardMineRewards(GameState before, GameState after, ArmyId armyId) {
   final (diamond, gold) = capturedMines(before, after, armyId);
   final reward = diamond * kDiamondMineReward + gold * kGoldMineReward;

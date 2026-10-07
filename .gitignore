@@ -45,4 +45,7 @@ app.*.map.json
 /android/app/release
 
 # Voice notes / photos with feature requests (personal, not code)
+/istekler/
 WhatsApp *
+Ses*.mp4
+*.m4a

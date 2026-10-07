@@ -1,22 +1,10 @@
-/// AI agent for Harita: Kendi İmparatorluğunu Kur.
+/// Greedy AI agent for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// A fully local, rule-based bot — no external API calls, no internet access.
-/// The agent picks one action at a time from the *current* [GameState] (so
-/// later moves build on earlier conquests) and its strength depends on the
-/// game's [AiDifficulty]:
-///
-/// - **Çok Kolay** (veryEasy): a few random, timid moves; no abilities/shop.
-/// - **Orta** (medium): greedy expansion, attacks enemies at 1.5× odds,
-///   occasionally uses an ability.
-/// - **Zor** (hard): scores every winning attack (enemy bases and diamond
-///   mines first), marches stacks toward the front, fires every ability at
-///   the most valuable area and buys ability packs.
-///
-/// The agent always plays the active army ([GameState.activeArmyId]); every
-/// other army — the human or another bot — is an enemy.
+/// Plays a bot's turn: draws the free card, plays cards, sends bombers,
+/// buys weapons and attacks — every other army (the players and the other
+/// bots) is its enemy. How well it plays follows [GameState.difficulty].
 library;
 
-import 'dart:collection';
 import 'dart:math';
 
 import 'package:harita/core/constants.dart';
@@ -32,57 +20,67 @@ import 'package:harita/domain/services/economy_service.dart';
 
 // ─── AI actions ──────────────────────────────────────────────────────────────
 
-/// Base class for a single AI action.
+/// One move of a bot.
 sealed class AiAction {
   const AiAction();
 }
 
-/// Attack (or friendly move) from [sourceId] into [targetId].
+/// Draws the free card of the turn ("Kart Çek").
+final class DrawCardAction extends AiAction {
+  const DrawCardAction();
+
+  @override
+  String toString() => 'DrawCardAction()';
+}
+
+/// Sends soldiers (and a tank) from [sourceId] into [targetId].
 final class AttackAction extends AiAction {
   const AttackAction({required this.sourceId, required this.targetId});
 
-  /// The territory the AI is attacking from (owned by the AI).
   final int sourceId;
-
-  /// The territory being attacked (or reinforced, if owned by the AI).
   final int targetId;
 
   @override
-  String toString() => 'AttackAction(source: $sourceId → target: $targetId)';
+  String toString() => 'AttackAction($sourceId → $targetId)';
 }
 
-/// Use a special ability targeting [targetTerritoryId].
+/// Plays [ability] on [targetTerritoryId].
 final class UseAbilityAction extends AiAction {
   const UseAbilityAction({
     required this.ability,
     required this.targetTerritoryId,
   });
 
-  /// The ability to activate.
   final AbilityType ability;
-
-  /// The territory the ability is directed at.
   final int targetTerritoryId;
 
   @override
-  String toString() =>
-      'UseAbilityAction(ability: $ability, target: $targetTerritoryId)';
+  String toString() => 'UseAbilityAction($ability → $targetTerritoryId)';
 }
 
-/// Purchase [item] from the Weapon Shop.
+/// Sends a bomber to [targetId].
+final class BomberAction extends AiAction {
+  const BomberAction({required this.targetId});
+
+  final int targetId;
+
+  @override
+  String toString() => 'BomberAction($targetId)';
+}
+
+/// Buys [item] in the Weapon Shop.
 final class PurchaseAction extends AiAction {
   const PurchaseAction({required this.item});
 
-  /// The item to buy.
   final WeaponItem item;
 
   @override
-  String toString() => 'PurchaseAction(item: ${item.id})';
+  String toString() => 'PurchaseAction(${item.id})';
 }
 
 // ─── GreedyAiAgent ───────────────────────────────────────────────────────────
 
-/// Rule-based AI opponent whose play strength follows [GameState.difficulty].
+/// A greedy bot: every action is the best-looking one right now.
 class GreedyAiAgent {
   GreedyAiAgent({
     required CombatService combat,
@@ -101,8 +99,10 @@ class GreedyAiAgent {
   final EconomyService _economy;
   final Random _rng;
 
-  /// Overrides the pause before each action (e.g. zero in simulations).
+  /// Overrides the pause before each action (tests use zero).
   final Duration Function(int actionIndex)? _actionDelay;
+
+  int _purchasesThisTurn = 0;
 
   Duration _delayFor(int i, int slowActions, int fastDelayMs) =>
       _actionDelay?.call(i) ??
@@ -113,33 +113,28 @@ class GreedyAiAgent {
             : fastDelayMs,
       );
 
-  /// Upper bound of actions the bot takes in one turn.
+  /// Most actions per turn for each difficulty.
   static int maxActions(AiDifficulty d) => switch (d) {
-    AiDifficulty.veryEasy => 3,
-    AiDifficulty.medium => 12,
-    AiDifficulty.hard => 35,
+    AiDifficulty.veryEasy => 4,
+    AiDifficulty.medium => 14,
+    AiDifficulty.hard => 40,
   };
 
   // ─── playTurn ─────────────────────────────────────────────────────────────
 
-  /// Plays a whole AI turn (without ending it): deploys reinforcements, then
-  /// repeatedly picks and applies [nextAction] until nothing useful is left
-  /// or [maxActions] is reached.
-  ///
-  /// The first [slowActions] actions are spaced 300–500 ms apart so the
-  /// player can follow them; later ones wait only [fastDelayMs] so long
-  /// turns on the big map stay quick. [onAction] receives every intermediate
-  /// state.
+  /// Plays the active bot's whole turn (without ending it). Every action is
+  /// reported through [onAction] as it happens, after a short pause, so the
+  /// map can show it.
   Future<GameState> playTurn(
     GameState initialState, {
     int slowActions = kAiSlowActionCount,
     int fastDelayMs = kAiFastActionDelayMs,
-    void Function(GameState state)? onAction,
+    void Function(AiAction action, GameState before, GameState after)? onAction,
     bool Function()? shouldContinue,
   }) async {
-    var state = deployReinforcements(initialState);
-    onAction?.call(state);
+    var state = initialState;
     final limit = maxActions(state.difficulty);
+    _purchasesThisTurn = 0;
 
     for (var i = 0; i < limit; i++) {
       if (shouldContinue != null && !shouldContinue()) break;
@@ -153,19 +148,20 @@ class GreedyAiAgent {
       final next = applyAction(action, state);
       // A rejected action would be chosen again; end the turn instead.
       if (identical(next, state)) break;
+      if (action is PurchaseAction) _purchasesThisTurn++;
+      onAction?.call(action, state, next);
       state = next;
-      onAction?.call(state);
     }
     return state;
   }
 
   // ─── nextAction ───────────────────────────────────────────────────────────
 
-  /// Chooses the single best action for the AI in [state], or `null` when it
-  /// has nothing worthwhile left to do this turn. Pure: never mutates [state].
+  /// The bot's next action, or `null` when its turn is over.
   AiAction? nextAction(GameState state, {int actionsTaken = 0}) {
     final view = _MapView(state);
     if (view.owned(view.me).isEmpty) return null;
+    if (!state.activeArmy.hasDrawnCard) return const DrawCardAction();
     switch (state.difficulty) {
       case AiDifficulty.veryEasy:
         return _veryEasyAction(view);
@@ -176,55 +172,14 @@ class GreedyAiAgent {
     }
   }
 
-  // ─── deployReinforcements ─────────────────────────────────────────────────
-
-  /// Places the active bot's undeployed unit pool onto its land.
-  ///
-  /// - veryEasy: on a random owned tile.
-  /// - medium: on the strongest frontier tile.
-  /// - hard: on the frontier tile closest to the enemy (biggest stack wins
-  ///   ties), so the bot always pushes with one big army.
-  GameState deployReinforcements(GameState state) {
-    if (state.activeArmy.totalUnitPool <= 0) return state;
-    final view = _MapView(state);
-    final me = view.me;
-    final owned = view.owned(me).where(_hasRoom).toList();
-    if (owned.isEmpty) return state;
-
-    List<Territory> order;
-    switch (state.difficulty) {
-      case AiDifficulty.veryEasy:
-        order = [...owned]..shuffle(_rng);
-      case AiDifficulty.medium:
-        final frontier = owned.where(view.isFrontier).toList();
-        order = (frontier.isEmpty ? owned : frontier)
-          ..sort((a, b) => b.unitCount.compareTo(a.unitCount));
-      case AiDifficulty.hard:
-        final toEnemy = view.distanceToEnemies();
-        final frontier = owned.where(view.isFrontier).toList();
-        order = (frontier.isEmpty ? owned : frontier)
-          ..sort((a, b) {
-            final d = toEnemy[a.id].compareTo(toEnemy[b.id]);
-            return d != 0 ? d : b.unitCount.compareTo(a.unitCount);
-          });
-    }
-
-    var result = state;
-    for (final t in order) {
-      if (result.activeArmy.totalUnitPool <= 0) break;
-      result = _economy.deployUnits(result, me, t.id);
-    }
-    return result;
-  }
-
   // ─── applyAction ──────────────────────────────────────────────────────────
 
-  /// Applies [action] to [state]. Returns [state] itself (identical) when the
-  /// action is no longer valid, so a stale decision can never crash a turn.
+  /// Applies [action]; returns [state] itself when it is rejected.
   GameState applyAction(AiAction action, GameState state) {
     final me = state.activeArmyId;
     try {
       return switch (action) {
+        DrawCardAction() => _ability.drawCard(state, me).$1,
         AttackAction(:final sourceId, :final targetId) => _combat.resolveAttack(
           state: state,
           attackingArmyId: me,
@@ -238,6 +193,11 @@ class GreedyAiAgent {
             ability: ability,
             targetTerritoryId: targetTerritoryId,
           ),
+        BomberAction(:final targetId) => _combat.bomberRaid(
+          state: state,
+          armyId: me,
+          targetTerritoryId: targetId,
+        ),
         PurchaseAction(:final item) => state.withArmy(
           _economy.purchaseItem(state.activeArmy, item),
         ),
@@ -253,14 +213,16 @@ class GreedyAiAgent {
 
   AiAction? _veryEasyAction(_MapView view) {
     final me = view.me;
+    final army = view.state.activeArmy;
     final options = <AttackAction>[];
     for (final s in view.owned(me)) {
       if (s.unitCount < 2) continue;
+      final attack = attackStrength(army, s);
       for (final adj in s.adjacentIds) {
         final t = view.byId(adj);
         if (t.ownerArmyId == me) continue;
-        // Timid: only empty land or enemies it outnumbers two to one.
-        if (t.ownerArmyId == null || s.unitCount - 1 >= t.unitCount * 2) {
+        // Timid: only cities it outnumbers two to one.
+        if (attack >= defenceStrength(t) * 2) {
           options.add(AttackAction(sourceId: s.id, targetId: t.id));
         }
       }
@@ -272,112 +234,81 @@ class GreedyAiAgent {
   // ─── Orta ─────────────────────────────────────────────────────────────────
 
   AiAction? _mediumAction(_MapView view, int actionsTaken) {
-    // An ability now and then (roughly every other turn).
-    if (actionsTaken == 0 && _rng.nextBool()) {
-      final use = _bestAbility(view, offensiveOnly: true, allowPacks: false);
+    // A card now and then (roughly every other turn).
+    if (actionsTaken <= 1 && _rng.nextBool()) {
+      final use = _bestCard(view, attackOnly: true);
       if (use != null) return use;
     }
 
-    final me = view.me;
-    AttackAction? best;
-    var bestScore = double.negativeInfinity;
-    for (final s in view.owned(me)) {
-      if (s.unitCount < 2) continue;
-      final attackers = s.unitCount - 1;
-      for (final adj in s.adjacentIds) {
-        final t = view.byId(adj);
-        if (t.ownerArmyId == me) continue;
-        final double score;
-        if (t.ownerArmyId == null) {
-          score =
-              10.0 +
-              (view.isBase(t) ? 20 : 0) +
-              (t.hasDiamondMine ? 25 : 0) +
-              attackers / 100;
-        } else if (attackers >= t.unitCount * kAiAttackOddsThreshold &&
-            attackers > t.unitCount) {
-          score =
-              15.0 +
-              (view.isBase(t) ? 20 : 0) +
-              (t.hasDiamondMine ? 25 : 0) +
-              attackers / 100;
-        } else {
-          continue;
-        }
-        if (score > bestScore) {
-          bestScore = score;
-          best = AttackAction(sourceId: s.id, targetId: t.id);
-        }
-      }
-    }
-    if (best != null) return best;
+    final attack = _bestAttack(view, minOdds: kAiAttackOddsThreshold);
+    if (attack != null) return attack;
 
-    final purchase = _cheapestUsefulPurchase(view.state);
-    return purchase;
+    final bomber = _enablingBomber(view);
+    if (bomber != null) return bomber;
+
+    return _purchase(view.state, keep: 300);
   }
 
   // ─── Zor ──────────────────────────────────────────────────────────────────
 
   AiAction? _hardAction(_MapView view) {
-    // 1. Fire every available ability at the most valuable area first.
-    final ability = _bestAbility(view, offensiveOnly: false, allowPacks: true);
-    if (ability != null) return ability;
+    final card = _bestCard(view, attackOnly: false);
+    if (card != null) return card;
 
-    // 2. Buy an ability pack when rich enough (keeps the pressure up).
-    final purchase = _bestPackPurchase(view.state);
+    final purchase = _purchase(view.state, keep: 0);
     if (purchase != null) return purchase;
 
-    // 3. The best guaranteed-win attack.
+    // Soften a city first when that makes it winnable.
+    final enabling = _enablingBomber(view);
+    if (enabling != null) return enabling;
+
+    final attack = _bestAttack(view, minOdds: 1.0);
+    if (attack != null) return attack;
+
+    return _harassBomber(view) ?? _consolidate(view);
+  }
+
+  // ─── Attacks ──────────────────────────────────────────────────────────────
+
+  AttackAction? _bestAttack(_MapView view, {required double minOdds}) {
     final me = view.me;
+    final army = view.state.activeArmy;
     final toEnemy = view.distanceToEnemies();
     AttackAction? best;
     var bestScore = double.negativeInfinity;
     for (final s in view.owned(me)) {
       if (s.unitCount < 2) continue;
-      final attackers = s.unitCount - 1;
+      final attack = attackStrength(army, s);
       for (final adj in s.adjacentIds) {
         final t = view.byId(adj);
         if (t.ownerArmyId == me) continue;
-        if (attackers <= t.unitCount) continue; // would lose — never do it
-        var score = 0.0;
-        final enemy = t.ownerArmyId;
-        if (enemy != null) {
-          score += 40 + t.unitCount * 0.5;
-          if (view.isBase(t)) score += 120;
-          // Finishing off isolated enemy tiles cuts the enemy apart.
-          if (!view.hasFriendlyNeighbour(t, enemy)) score += 15;
-        } else {
-          score += 12;
-          if (view.isBase(t)) score += 60;
-        }
+        final defence = defenceStrength(t);
+        if (attack <= defence || attack < defence * minOdds) continue;
+        var score = t.ownerArmyId != null ? 40 + t.unitCount * 0.3 : 15.0;
+        if (t.hasGoldMine) score += 60;
         if (t.hasDiamondMine) score += 70;
-        // March toward the player and keep big stacks moving.
         score -= toEnemy[t.id] * 0.8;
-        score += attackers * 0.05;
+        score += attack * 0.02;
         if (score > bestScore) {
           bestScore = score;
           best = AttackAction(sourceId: s.id, targetId: t.id);
         }
       }
     }
-    if (best != null) return best;
-
-    // 4. Bring idle interior stacks to the front.
-    return _consolidate(view);
+    return best;
   }
 
-  /// Moves an interior stack one step toward the nearest non-owned tile.
+  /// Brings idle stacks from safe interior cities to the front.
   AttackAction? _consolidate(_MapView view) {
     final me = view.me;
-    final toFront = view.distanceToFront(me);
+    final toFront = view.distanceToFront();
     AttackAction? best;
-    var bestUnits = 2;
+    var bestUnits = 5;
     for (final s in view.owned(me)) {
       if (s.unitCount <= bestUnits || view.isFrontier(s)) continue;
       for (final adj in s.adjacentIds) {
         final t = view.byId(adj);
         if (t.ownerArmyId != me || toFront[t.id] >= toFront[s.id]) continue;
-        if (!_hasRoom(t)) continue;
         bestUnits = s.unitCount;
         best = AttackAction(sourceId: s.id, targetId: t.id);
         break;
@@ -386,78 +317,126 @@ class GreedyAiAgent {
     return best;
   }
 
-  // ─── Abilities ────────────────────────────────────────────────────────────
+  // ─── Bombers ──────────────────────────────────────────────────────────────
 
-  /// Returns the most valuable ability use, or `null` if no ability is ready
-  /// (or worth it). With [allowPacks], abilities on cooldown are still used
-  /// when the army owns the matching shop pack.
-  UseAbilityAction? _bestAbility(
-    _MapView view, {
-    required bool offensiveOnly,
-    required bool allowPacks,
-  }) {
-    final me = view.me;
+  /// A raid that makes an attack winnable next.
+  BomberAction? _enablingBomber(_MapView view) {
+    final army = view.state.activeArmy;
+    if (army.bombersReady <= 0) return null;
+    BomberAction? best;
+    var bestGap = 1 << 30;
+    for (final s in view.owned(view.me)) {
+      if (s.unitCount < 2) continue;
+      final attack = attackStrength(army, s);
+      for (final adj in s.adjacentIds) {
+        final t = view.byId(adj);
+        if (t.ownerArmyId == view.me) continue;
+        final gap = defenceStrength(t) - attack;
+        if (gap < 0 || gap >= army.bombersReady * kBomberDamage) continue;
+        if (gap < bestGap) {
+          bestGap = gap;
+          best = BomberAction(targetId: t.id);
+        }
+      }
+    }
+    return best;
+  }
+
+  /// A raid on the strongest enemy city next to the bot's land.
+  BomberAction? _harassBomber(_MapView view) {
+    if (view.state.activeArmy.bombersReady <= 0) return null;
+    Territory? best;
+    for (final s in view.owned(view.me)) {
+      for (final adj in s.adjacentIds) {
+        final t = view.byId(adj);
+        if (t.ownerArmyId == null || t.ownerArmyId == view.me) continue;
+        if (best == null || t.unitCount > best.unitCount) best = t;
+      }
+    }
+    return best == null ? null : BomberAction(targetId: best.id);
+  }
+
+  // ─── Cards ────────────────────────────────────────────────────────────────
+
+  UseAbilityAction? _bestCard(_MapView view, {required bool attackOnly}) {
     final army = view.state.activeArmy;
     const order = [
+      AbilityType.nuclearBomb,
+      AbilityType.atomBomb,
       AbilityType.megaBomba,
       AbilityType.bombardment,
       AbilityType.fireBomb,
     ];
     for (final type in order) {
-      if (!_canUse(army, type, allowPacks)) continue;
-      final target = _bestCaptureTarget(view, kAbilityCaptureTiles[type]!);
+      if (army.cardCount(type) <= 0) continue;
+      final target = _bestCaptureTarget(view, type);
       if (target != null) {
         return UseAbilityAction(ability: type, targetTerritoryId: target);
       }
     }
-    if (offensiveOnly) return null;
+    if (attackOnly) return null;
 
-    if (_canUse(army, AbilityType.soldierSpell, allowPacks)) {
-      final frontier = view.owned(me).where(view.isFrontier).where(_hasRoom);
+    if (army.cardCount(AbilityType.tribute) > 0) {
+      Territory? best;
+      var richest = 0;
+      for (final t in view.state.territories) {
+        final owner = t.ownerArmyId;
+        if (owner == null || owner == view.me) continue;
+        final balance = view.state.army(owner).diamondBalance;
+        if (balance > richest) {
+          richest = balance;
+          best = t;
+        }
+      }
+      if (best != null && richest >= 50) {
+        return UseAbilityAction(
+          ability: AbilityType.tribute,
+          targetTerritoryId: best.id,
+        );
+      }
+    }
+
+    if (army.cardCount(AbilityType.soldierSpell) > 0) {
+      final frontier = view.owned(view.me).where(view.isFrontier);
       if (frontier.isNotEmpty) {
-        final tile = frontier.reduce(
+        final city = frontier.reduce(
           (a, b) => a.unitCount >= b.unitCount ? a : b,
         );
         return UseAbilityAction(
           ability: AbilityType.soldierSpell,
-          targetTerritoryId: tile.id,
+          targetTerritoryId: city.id,
         );
       }
     }
     return null;
   }
 
-  bool _canUse(Army army, AbilityType type, bool allowPacks) {
-    final s = army.abilities[type];
-    if (s == null || !s.isUnlocked) return false;
-    if (!s.isOnCooldown) return true;
-    return allowPacks &&
-        army.inventory.any((i) => i.id == kAbilityPackItemIds[type]);
-  }
-
-  /// Picks the tile bordering AI land whose [captureArea] of [count] tiles is
-  /// worth the most (enemy units, bases, enemy land), or `null` if none.
-  int? _bestCaptureTarget(_MapView view, int count) {
+  int? _bestCaptureTarget(_MapView view, AbilityType type) {
     final me = view.me;
+    final state = view.state;
+    final count = kAbilityCaptureTiles[type]!;
+    final damage = kAbilityDamage[type]!;
     int? best;
     var bestValue = 0.0;
-    final tried = <int>{};
-    for (final s in view.owned(me)) {
-      for (final adj in s.adjacentIds) {
-        final t = view.byId(adj);
-        if (t.ownerArmyId == me || !tried.add(adj)) continue;
-        var value = 0.0;
-        for (final id in captureArea(view.state.territories, me, adj, count)) {
-          final c = view.byId(id);
-          final isEnemy = c.ownerArmyId != null;
-          value += isEnemy ? 10 + c.unitCount * 2.0 : 3;
-          if (view.isBase(c)) value += isEnemy ? 60 : 25;
-          if (c.hasDiamondMine) value += 50;
+    for (final t in state.territories) {
+      if (t.ownerArmyId == me) continue;
+      if (!isValidTarget(state, me, type, t)) continue;
+      var value = 0.0;
+      for (final id in captureArea(state.territories, me, t.id, count)) {
+        final c = view.byId(id);
+        final isEnemy = c.ownerArmyId != null;
+        if (c.unitCount > damage) {
+          // Only soldiers lost: worth something against enemies.
+          if (isEnemy) value += damage * 0.4;
+          continue;
         }
-        if (value > bestValue) {
-          bestValue = value;
-          best = adj;
-        }
+        value += isEnemy ? 10 + c.unitCount * 1.0 : 3 + c.unitCount * 0.3;
+        if (c.hasGoldMine) value += 60;
+        if (c.hasDiamondMine) value += 50;
+      }
+      if (value > bestValue) {
+        bestValue = value;
+        best = t.id;
       }
     }
     return best;
@@ -465,85 +444,78 @@ class GreedyAiAgent {
 
   // ─── Shop ─────────────────────────────────────────────────────────────────
 
-  PurchaseAction? _cheapestUsefulPurchase(GameState state) {
-    final army = state.activeArmy;
-    final affordable =
-        _economy
-            .getEligibleShopItems(army, state.currentTurn)
-            .where((i) => i.diamondCost <= army.diamondBalance)
-            .where((i) => !army.inventory.any((owned) => owned.id == i.id))
-            .toList()
-          ..sort((a, b) => a.diamondCost.compareTo(b.diamondCost));
-    return affordable.isEmpty ? null : PurchaseAction(item: affordable.first);
-  }
+  /// Most purchases per turn for each difficulty.
+  static int maxPurchases(AiDifficulty d) => switch (d) {
+    AiDifficulty.veryEasy => 0,
+    AiDifficulty.medium => 1,
+    AiDifficulty.hard => 2,
+  };
 
-  PurchaseAction? _bestPackPurchase(GameState state) {
+  /// Buys a tank when out of them, otherwise the dearest affordable bomb
+  /// card, always keeping [keep] diamonds and at most [maxPurchases] times
+  /// a turn.
+  PurchaseAction? _purchase(GameState state, {required int keep}) {
+    if (_purchasesThisTurn >= maxPurchases(state.difficulty)) return null;
     final army = state.activeArmy;
-    final affordable =
-        _economy
-            .getEligibleShopItems(army, state.currentTurn)
-            .where((i) => i.diamondCost <= army.diamondBalance)
-            .where((i) => !army.inventory.any((owned) => owned.id == i.id))
-            .toList()
+    final budget = army.diamondBalance - keep;
+    final items = _economy.getShopItems().where((i) => i.diamondCost <= budget);
+    if (items.isEmpty) return null;
+    if (army.tanks < 2) {
+      for (final i in items) {
+        if (i.tanks > 0) return PurchaseAction(item: i);
+      }
+    }
+    final cards =
+        items.where((i) => i.card != null && i.card!.captures).toList()
           ..sort((a, b) => b.diamondCost.compareTo(a.diamondCost));
-    return affordable.isEmpty ? null : PurchaseAction(item: affordable.first);
+    return cards.isEmpty ? null : PurchaseAction(item: cards.first);
   }
-
-  static bool _hasRoom(Territory t) =>
-      t.baseCapacity == null || t.unitCount < t.baseCapacity!;
 }
 
 // ─── _MapView ────────────────────────────────────────────────────────────────
 
-/// Read-only helper over a [GameState] with O(1) tile lookup and BFS maps.
+/// Cached lookups over one [GameState] for the active bot.
 class _MapView {
-  _MapView(this.state)
-    : me = state.activeArmyId,
-      _byId = {for (final t in state.territories) t.id: t};
+  _MapView(this.state) : me = state.activeArmyId;
 
   final GameState state;
-
-  /// The bot that is playing.
   final ArmyId me;
-  final Map<int, Territory> _byId;
-  final Map<ArmyId, List<Territory>> _owned = {};
+  List<Territory>? _mine;
 
-  Territory byId(int id) => _byId[id]!;
+  Territory byId(int id) => state.territories[id];
 
-  List<Territory> owned(ArmyId army) => _owned[army] ??= state.territories
-      .where((t) => t.ownerArmyId == army)
-      .toList();
+  List<Territory> owned(ArmyId army) {
+    if (army == me) {
+      return _mine ??= state.territories
+          .where((t) => t.ownerArmyId == army)
+          .toList();
+    }
+    return state.territories.where((t) => t.ownerArmyId == army).toList();
+  }
 
-  bool isBase(Territory t) => t.type != TerritoryType.normal;
-
-  /// `true` when [t] touches a tile its owner does not own.
   bool isFrontier(Territory t) =>
       t.adjacentIds.any((id) => byId(id).ownerArmyId != t.ownerArmyId);
 
-  bool hasFriendlyNeighbour(Territory t, ArmyId army) =>
-      t.adjacentIds.any((id) => byId(id).ownerArmyId == army);
-
-  /// Steps from every tile to the nearest tile owned by another army.
+  /// Steps from every city to the nearest enemy city.
   List<int> distanceToEnemies() => _bfs(
     state.territories.where(
       (t) => t.ownerArmyId != null && t.ownerArmyId != me,
     ),
   );
 
-  /// Steps from every tile to the nearest tile *not* owned by [army].
-  List<int> distanceToFront(ArmyId army) =>
-      _bfs(state.territories.where((t) => t.ownerArmyId != army));
+  /// Steps from every city to the nearest city that is not the bot's.
+  List<int> distanceToFront() =>
+      _bfs(state.territories.where((t) => t.ownerArmyId != me));
 
   List<int> _bfs(Iterable<Territory> sources) {
-    final maxId = state.territories.fold<int>(0, (m, t) => max(m, t.id));
-    final dist = List<int>.filled(maxId + 1, 1 << 20);
-    final queue = Queue<int>();
+    final dist = List<int>.filled(state.territories.length, 1 << 20);
+    final queue = <int>[];
     for (final t in sources) {
       dist[t.id] = 0;
       queue.add(t.id);
     }
-    while (queue.isNotEmpty) {
-      final id = queue.removeFirst();
+    for (var i = 0; i < queue.length; i++) {
+      final id = queue[i];
       for (final adj in byId(id).adjacentIds) {
         if (dist[adj] > dist[id] + 1) {
           dist[adj] = dist[id] + 1;

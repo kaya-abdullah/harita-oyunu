@@ -14,7 +14,6 @@ import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/domain/models/territory.dart';
-import 'package:harita/domain/models/weapon_item.dart';
 
 part 'save_data.g.dart';
 
@@ -26,7 +25,7 @@ part 'save_data.g.dart';
 /// Version 3: fine real-outline map, diamond mines and up to 6 bots (all
 /// armies in one list). Older saves are rejected and discarded by the
 /// repository.
-const int kSaveDataSchemaVersion = 3;
+const int kSaveDataSchemaVersion = 4;
 
 // ─── SaveData ─────────────────────────────────────────────────────────────────
 
@@ -138,8 +137,8 @@ Map<String, dynamic> _territoryToJson(Territory t) => {
   'adjacentIds': t.adjacentIds,
   'unitCount': t.unitCount,
   'ownerArmyId': t.ownerArmyId?.name,
-  'baseCapacity': t.baseCapacity,
   'diamondMine': t.hasDiamondMine,
+  'forest': t.hasForest,
 };
 
 Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
@@ -151,8 +150,8 @@ Territory _territoryFromJson(Map<String, dynamic> json) => Territory(
   ownerArmyId: json['ownerArmyId'] != null
       ? _armyIdFromString(json['ownerArmyId'] as String)
       : null,
-  baseCapacity: json['baseCapacity'] as int?,
   hasDiamondMine: json['diamondMine'] as bool? ?? false,
+  hasForest: json['forest'] as bool? ?? false,
 );
 
 // ─── Army serialisation ───────────────────────────────────────────────────────
@@ -161,69 +160,26 @@ Map<String, dynamic> _armyToJson(Army a) => {
   'id': a.id.name,
   'kind': a.kind.name,
   'diamondBalance': a.diamondBalance,
-  'totalUnitPool': a.totalUnitPool,
-  'abilities': a.abilities.map(
-    (type, state) => MapEntry(type.name, _abilityStateToJson(state)),
+  'cards': a.cards.map((type, count) => MapEntry(type.name, count)),
+  'tanks': a.tanks,
+  'bombers': a.bombers,
+  'bombersFlown': a.bombersFlown,
+  'tanksUsed': a.tanksUsed,
+  'hasDrawnCard': a.hasDrawnCard,
+};
+
+Army _armyFromJson(Map<String, dynamic> json) => Army(
+  id: _armyIdFromString(json['id'] as String),
+  kind: _armyKindFromString(json['kind'] as String),
+  diamondBalance: json['diamondBalance'] as int,
+  cards: (json['cards'] as Map<String, dynamic>).map(
+    (key, value) => MapEntry(_abilityTypeFromString(key), value as int),
   ),
-  'inventory': a.inventory.map(_weaponItemToJson).toList(),
-};
-
-Army _armyFromJson(Map<String, dynamic> json) {
-  final abilitiesRaw = (json['abilities'] as Map<String, dynamic>)
-      .map<AbilityType, AbilityState>(
-        (key, value) => MapEntry(
-          _abilityTypeFromString(key),
-          _abilityStateFromJson(value as Map<String, dynamic>),
-        ),
-      );
-
-  final inventory = (json['inventory'] as List<dynamic>)
-      .cast<Map<String, dynamic>>()
-      .map(_weaponItemFromJson)
-      .toList();
-
-  return Army(
-    id: _armyIdFromString(json['id'] as String),
-    kind: _armyKindFromString(json['kind'] as String),
-    diamondBalance: json['diamondBalance'] as int,
-    totalUnitPool: json['totalUnitPool'] as int,
-    abilities: abilitiesRaw,
-    inventory: inventory,
-  );
-}
-
-// ─── AbilityState serialisation ───────────────────────────────────────────────
-
-Map<String, dynamic> _abilityStateToJson(AbilityState s) => {
-  'type': s.type.name,
-  'isUnlocked': s.isUnlocked,
-  'cooldownTurnsRemaining': s.cooldownTurnsRemaining,
-};
-
-AbilityState _abilityStateFromJson(Map<String, dynamic> json) => AbilityState(
-  type: _abilityTypeFromString(json['type'] as String),
-  isUnlocked: json['isUnlocked'] as bool,
-  cooldownTurnsRemaining: json['cooldownTurnsRemaining'] as int?,
-);
-
-// ─── WeaponItem serialisation ─────────────────────────────────────────────────
-
-Map<String, dynamic> _weaponItemToJson(WeaponItem w) => {
-  'id': w.id,
-  'nameKey': w.nameKey,
-  'diamondCost': w.diamondCost,
-  'unlockTurn': w.unlockTurn,
-  'requiredAbility': w.requiredAbility?.name,
-};
-
-WeaponItem _weaponItemFromJson(Map<String, dynamic> json) => WeaponItem(
-  id: json['id'] as String,
-  nameKey: json['nameKey'] as String,
-  diamondCost: json['diamondCost'] as int,
-  unlockTurn: json['unlockTurn'] as int,
-  requiredAbility: json['requiredAbility'] != null
-      ? _abilityTypeFromString(json['requiredAbility'] as String)
-      : null,
+  tanks: json['tanks'] as int,
+  bombers: json['bombers'] as int,
+  bombersFlown: json['bombersFlown'] as int,
+  tanksUsed: json['tanksUsed'] as int,
+  hasDrawnCard: json['hasDrawnCard'] as bool,
 );
 
 // ─── Enum helpers ─────────────────────────────────────────────────────────────

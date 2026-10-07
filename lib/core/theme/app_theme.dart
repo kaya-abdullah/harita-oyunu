@@ -59,8 +59,9 @@ abstract class AppTheme {
   /// Dark text on this colour: ~8.8:1 contrast ✓
   static const Color army2Light = Color(0xFFFFCDD2);
 
-  /// Solid colour of every army, indexed by [ArmyId.index]: blue (you),
-  /// red, purple, orange, teal, pink, brown. White text reads on all of them.
+  /// Solid colour of every army, indexed by [ArmyId.index]: blue, red,
+  /// purple, orange, teal, pink, brown, green, navy, grey, khaki, maroon.
+  /// White text reads on all of them.
   static const List<Color> armyPrimaries = [
     army1Primary,
     army2Primary,
@@ -69,6 +70,11 @@ abstract class AppTheme {
     Color(0xFF00796B),
     Color(0xFFAD1457),
     Color(0xFF5D4037),
+    Color(0xFF558B2F),
+    Color(0xFF1A237E),
+    Color(0xFF455A64),
+    Color(0xFF827717),
+    Color(0xFF6D1B1B),
   ];
 
   /// Light tint of every army, indexed by [ArmyId.index].
@@ -80,6 +86,11 @@ abstract class AppTheme {
     Color(0xFFB2DFDB),
     Color(0xFFF8BBD0),
     Color(0xFFD7CCC8),
+    Color(0xFFDCEDC8),
+    Color(0xFFC5CAE9),
+    Color(0xFFCFD8DC),
+    Color(0xFFF0F4C3),
+    Color(0xFFEFCDCD),
   ];
 
   /// Solid colour of army [id].
@@ -88,12 +99,15 @@ abstract class AppTheme {
   /// Light tint of army [id].
   static Color armyLight(ArmyId id) => armyLights[id.index];
 
-  /// Colour of each ability card. The Fire Bomb card is green.
+  /// Colour of each card. The Fire Bomb card is green.
   static Color abilityColor(AbilityType type) => switch (type) {
     AbilityType.fireBomb => kAccentGreen,
     AbilityType.bombardment => const Color(0xFFE65100),
     AbilityType.soldierSpell => army1Primary,
     AbilityType.megaBomba => army2Primary,
+    AbilityType.atomBomb => const Color(0xFF4A148C),
+    AbilityType.nuclearBomb => const Color(0xFF212121),
+    AbilityType.tribute => const Color(0xFF8D6E00),
   };
 
   /// Diamond (Elmas) colour used for the currency icon.

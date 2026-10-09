@@ -14,9 +14,9 @@ abstract class VictoryService {
   /// Returns the [ArmyId] of the winner, or `null` while the game goes on.
   ///
   /// - The last army that still owns land wins (with a single opponent this
-  ///   also covers conquering all [kTerritoryCount] tiles).
+  ///   also covers conquering all [kTerritoryCount] cities).
   /// - If the human player ([ArmyId.army1]) has lost all land, the game is
-  ///   over: the bot with the most tiles wins.
+  ///   over: the bot with the most cities wins.
   ///
   /// This is a pure read — it never mutates [state].
   ArmyId? checkVictory(GameState state);

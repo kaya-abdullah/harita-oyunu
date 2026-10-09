@@ -23,9 +23,11 @@ part 'save_data.g.dart';
 ///
 /// Version 2: Africa tile map + bot difficulty.
 /// Version 3: fine real-outline map, diamond mines and up to 6 bots (all
-/// armies in one list). Older saves are rejected and discarded by the
-/// repository.
-const int kSaveDataSchemaVersion = 4;
+/// armies in one list).
+/// Version 4: cards with counts.
+/// Version 5: countries split into cities (182 cities instead of tiles).
+/// Older saves are rejected and discarded by the repository.
+const int kSaveDataSchemaVersion = 5;
 
 // ─── SaveData ─────────────────────────────────────────────────────────────────
 

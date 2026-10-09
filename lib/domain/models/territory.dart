@@ -19,7 +19,7 @@ enum TerritoryType {
 
 // ─── Territory ───────────────────────────────────────────────────────────────
 
-/// Represents one small square tile ("minik kare") of the Africa map.
+/// Represents one city of the Africa map and the land around it.
 ///
 /// Immutable by design — mutating state is done via [copyWith].
 class Territory {
@@ -56,11 +56,11 @@ class Territory {
   /// [TerritoryType.smallBase] territories.
   final int? baseCapacity;
 
-  /// Whether a diamond mine sits on this tile. Capturing it pays
+  /// Whether a diamond mine lies in this city's land. Capturing it pays
   /// [kDiamondMineReward] diamonds.
   final bool hasDiamondMine;
 
-  /// Whether this tile is a gold mine: every base is one. Capturing it pays
+  /// Whether this city is a gold mine (a big capital). Capturing it pays
   /// [kGoldMineReward] diamonds.
   bool get hasGoldMine => type != TerritoryType.normal;
 

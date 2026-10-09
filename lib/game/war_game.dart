@@ -8,8 +8,10 @@ import 'package:flame/components.dart';
 import 'package:flame/game.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:harita/domain/models/army.dart';
 import 'package:harita/game/components/map_component.dart';
 import 'package:harita/game/map_gesture_layer.dart';
+import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 
 // ─── WarGame ─────────────────────────────────────────────────────────────────
 
@@ -19,7 +21,8 @@ import 'package:harita/game/map_gesture_layer.dart';
 /// pipeline with the Riverpod state layer via the injected [WidgetRef].
 ///
 /// The camera fits the whole continent into the widget; players can pinch
-/// to zoom in on the small tiles and drag to pan ([MapGestureLayer]).
+/// to zoom in on the cities and drag to pan ([MapGestureLayer]). It
+/// opens zoomed in on the player's own country.
 class WarGame extends FlameGame {
   WarGame({required this.ref});
 
@@ -52,6 +55,31 @@ class WarGame extends FlameGame {
     camera.viewfinder.anchor = Anchor.center;
     await world.addAll([SeaBackdrop(), mapComponent]);
     _applyCamera(recenter: true);
+    focusOnPlayer();
+  }
+
+  /// Extra zoom of the opening view, close enough to read the soldier
+  /// counts of the player's cities.
+  static const double startZoom = 2.6;
+
+  /// Centres the camera on the player's land (or their start country) at
+  /// [startZoom].
+  void focusOnPlayer() {
+    final graph = mapComponent.graph;
+    final state = ref.read(gameProvider);
+    var ids = [
+      for (final t in state.territories)
+        if (t.ownerArmyId == ArmyId.army1) t.id,
+    ];
+    if (ids.isEmpty) ids = graph.playerStartCities;
+    var sum = Offset.zero;
+    for (final id in ids) {
+      sum += graph.getPosition(id);
+    }
+    final centre = sum / ids.length.toDouble();
+    zoomTo(startZoom);
+    camera.viewfinder.position = Vector2(centre.dx, centre.dy);
+    _clampPosition();
   }
 
   @override

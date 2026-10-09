@@ -1,7 +1,8 @@
-// Africa tile map ("minik kare") and save-format tests.
+// Africa country-and-city map and save-format tests.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -12,25 +13,63 @@ import 'package:harita/domain/models/save_data.dart';
 import 'package:harita/domain/models/territory.dart';
 import 'package:harita/domain/services/ability_service.dart';
 import 'package:harita/infrastructure/map/territory_graph.dart';
+import 'package:harita/infrastructure/map/territory_graph_data.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 
 void main() {
   final graph = TerritoryGraph.bundled();
 
-  test('map has kTerritoryCount square tiles with unique grid cells', () {
+  test('the embedded map is identical to the JSON asset', () {
+    expect(
+      File('assets/maps/territory_graph.json').readAsStringSync(),
+      kTerritoryGraphJson,
+    );
+  });
+
+  test('every country has 4 cities (the smallest ones 2 or 3)', () {
     expect(graph.territories, hasLength(kTerritoryCount));
-    final cells = <String>{};
-    for (final t in graph.territories) {
-      final p = graph.positionOf(t.id);
-      expect(cells.add('${p.col},${p.row}'), isTrue);
-      expect(p.col, inInclusiveRange(0, graph.cols - 1));
-      expect(p.row, inInclusiveRange(0, graph.rows - 1));
-      expect(p.offset.dx, (p.col + 0.5) * graph.tileSize);
-      expect(p.offset.dy, (p.row + 0.5) * graph.tileSize);
+    final countries = graph.countries.toSet();
+    expect(countries, hasLength(50));
+    for (final c in countries) {
+      expect(graph.citiesOf(c).length, inInclusiveRange(2, 4), reason: c);
+    }
+    final four = countries.where((c) => graph.citiesOf(c).length == 4);
+    expect(four.length, greaterThanOrEqualTo(40));
+    for (final c in [
+      'region_morocco',
+      'region_egypt',
+      'region_nigeria',
+      'region_congo',
+      'region_south_africa',
+      'region_madagascar',
+    ]) {
+      expect(graph.citiesOf(c), hasLength(4), reason: c);
     }
   });
 
-  test('tiles are adjacent only to grid neighbours (plus sea links)', () {
+  test('each city lies in its own area, inside its country', () {
+    Path pathOf(List<List<Offset>> rings) {
+      final p = Path();
+      for (final r in rings) {
+        p.addPolygon(r, true);
+      }
+      return p;
+    }
+
+    for (final t in graph.territories) {
+      final pos = graph.getPosition(t.id);
+      expect(graph.cityOutlines[t.id], isNotEmpty);
+      expect(
+        pathOf(graph.cityOutlines[t.id]).contains(pos),
+        isTrue,
+        reason: t.name,
+      );
+      final country = graph.outlines[graph.countryOf(t.id)]!;
+      expect(pathOf(country).contains(pos), isTrue, reason: t.name);
+    }
+  });
+
+  test('cities are neighbours both ways; only Madagascar crosses the sea', () {
     var seaLinks = 0;
     for (final t in graph.territories) {
       expect(t.adjacentIds, isNotEmpty);
@@ -39,67 +78,83 @@ void main() {
         if (graph.isSeaLink(t.id, adj)) seaLinks++;
       }
     }
-    // Madagascar is linked to the mainland by exactly one (two-way) bridge.
+    // Madagascar is linked to the mainland by exactly one (two-way) route.
     expect(seaLinks, 2);
-  });
-
-  test('every tile can reach every other tile', () {
-    final seen = {0};
-    final queue = [0];
-    while (queue.isNotEmpty) {
-      for (final adj in graph.getById(queue.removeLast()).adjacentIds) {
-        if (seen.add(adj)) queue.add(adj);
-      }
-    }
-    expect(seen, hasLength(kTerritoryCount));
-  });
-
-  test('Africa is taller than wide and has the real cities as bases', () {
-    expect(graph.rows, greaterThanOrEqualTo(graph.cols));
-    final bases = graph.getBases();
-    expect(bases.where((t) => t.type == TerritoryType.bigBase), hasLength(5));
-    expect(bases.length, greaterThanOrEqualTo(15));
+    final link = graph.seaLinks.single;
     expect(
-      graph.territories.map((t) => t.name).toSet(),
-      containsAll(['region_egypt', 'region_south_africa', 'region_madagascar']),
+      {graph.countryOf(link.$1), graph.countryOf(link.$2)},
+      {'region_madagascar', 'region_mozambique'},
     );
   });
 
-  test('the map is fine-grained: many tiny tiles', () {
-    expect(kTerritoryCount, greaterThan(1000));
+  test('every city can reach every other city', () {
+    final dist = graph.distancesFrom([0]);
+    expect(dist.every((d) => d < kTerritoryCount), isTrue);
   });
 
-  test('real country outlines are drawn for every region with tiles', () {
-    final regions = graph.territories.map((t) => t.name).toSet();
-    expect(graph.outlines.keys, containsAll(regions));
+  test('border lines join neighbours (or the coast) of every city', () {
+    final coast = <int>{};
+    for (final b in graph.borders) {
+      expect(b.points.length, greaterThanOrEqualTo(2));
+      if (b.b == null) {
+        coast.add(b.a);
+      } else {
+        expect(graph.areAdjacent(b.a, b.b!), isTrue);
+      }
+    }
+    // Coastal cities: Casablanca, Cape Town, Mogadishu…
+    for (final name in [
+      'city_casablanca',
+      'city_cape_town',
+      'city_mogadishu',
+    ]) {
+      final id = graph.territories.firstWhere((t) => t.name == name).id;
+      expect(coast, contains(id), reason: name);
+    }
+  });
+
+  test('big capitals are gold mines', () {
+    final gold = graph.getBases().map((t) => t.name).toSet();
+    expect(
+      gold,
+      containsAll([
+        'city_cairo',
+        'city_lagos',
+        'city_kinshasa',
+        'city_nairobi',
+      ]),
+    );
+    expect(gold.length, inInclusiveRange(10, 15));
+  });
+
+  test('real country outlines surround their cities', () {
+    expect(graph.outlines.keys.toSet(), graph.countries.toSet());
     for (final rings in graph.outlines.values) {
       expect(rings, isNotEmpty);
       for (final ring in rings) {
         expect(ring.length, greaterThanOrEqualTo(3));
       }
     }
-    // The outline of Egypt surrounds Cairo's tile.
-    final cairo = graph.positionOf(graph.startIds[2]).offset;
+    final cairo = graph.territories.firstWhere((t) => t.name == 'city_cairo');
+    expect(graph.countryOf(cairo.id), 'region_egypt');
+    final p = graph.getPosition(cairo.id);
     final egypt = graph.outlines['region_egypt']!.first;
-    final xs = egypt.map((p) => p.dx);
-    final ys = egypt.map((p) => p.dy);
-    expect(cairo.dx, inInclusiveRange(xs.reduce(min), xs.reduce(max)));
-    expect(cairo.dy, inInclusiveRange(ys.reduce(min), ys.reduce(max)));
+    final xs = egypt.map((o) => o.dx);
+    final ys = egypt.map((o) => o.dy);
+    expect(p.dx, inInclusiveRange(xs.reduce(min), xs.reduce(max)));
+    expect(p.dy, inInclusiveRange(ys.reduce(min), ys.reduce(max)));
   });
 
   test('terrain follows the real continent (forests, deserts)', () {
     expect(graph.terrains, hasLength(kTerritoryCount));
-    Map<Terrain, int> count(String region) {
+    Terrain mostly(String region) {
       final m = <Terrain, int>{};
-      for (final t in graph.territories.where((t) => t.name == region)) {
-        final k = graph.terrainOf(t.id);
+      for (final id in graph.citiesOf(region)) {
+        final k = graph.terrainOf(id);
         m[k] = (m[k] ?? 0) + 1;
       }
-      return m;
+      return m.entries.reduce((a, b) => b.value > a.value ? b : a).key;
     }
-
-    Terrain mostly(String region) =>
-        count(region).entries.reduce((a, b) => b.value > a.value ? b : a).key;
 
     expect(mostly('region_congo'), Terrain.rainforest);
     expect(mostly('region_gabon'), Terrain.rainforest);
@@ -111,7 +166,7 @@ void main() {
     }
   });
 
-  test('the satellite picture covers the grid with the right shape', () {
+  test('the satellite picture covers the map with the right shape', () {
     final file = File('assets/images/africa_satellite.jpg');
     expect(file.existsSync(), isTrue);
     expect(graph.satelliteMargin, greaterThan(0));
@@ -129,20 +184,38 @@ void main() {
     expect(w / h, closeTo(rect.width / rect.height, 0.01));
   });
 
-  test('seven distinct start bases: you plus up to six bots', () {
-    expect(graph.startIds, hasLength(kMaxBots + 1));
-    expect(graph.startIds.toSet(), hasLength(kMaxBots + 1));
-    for (final id in graph.startIds) {
-      expect(graph.getById(id).type, isNot(TerritoryType.normal));
+  test('seven start countries that never touch: you in Morocco, a bot '
+      'close by', () {
+    expect(graph.startCities, hasLength(kMaxBots + 1));
+    final countries = [
+      for (final g in graph.startCities) graph.countryOf(g.first),
+    ];
+    expect(countries.toSet(), hasLength(kMaxBots + 1));
+    expect(countries.first, 'region_morocco');
+    for (final g in graph.startCities) {
+      // A whole country each.
+      expect(g.toSet(), graph.citiesOf(graph.countryOf(g.first)).toSet());
     }
+    for (var a = 0; a < graph.startCities.length; a++) {
+      for (var b = a + 1; b < graph.startCities.length; b++) {
+        for (final id in graph.startCities[a]) {
+          for (final adj in graph.getById(id).adjacentIds) {
+            expect(graph.startCities[b], isNot(contains(adj)));
+          }
+        }
+      }
+    }
+    // The first bot starts two steps from the player.
+    final dist = graph.distancesFrom(graph.playerStartCities);
+    final near = graph.startCities[1].map((id) => dist[id]).reduce(min);
+    expect(near, 2);
   });
 
   test('diamond mines are spread over the map', () {
     final mines = graph.territories.where((t) => t.hasDiamondMine).toList();
-    expect(mines.length, inInclusiveRange(15, 30));
-    expect(mines.where((t) => t.type != TerritoryType.normal), isEmpty);
+    expect(mines.length, inInclusiveRange(10, 20));
     expect(
-      mines.map((t) => t.name).toSet(),
+      mines.map((t) => graph.countryOf(t.id)).toSet(),
       containsAll([
         'region_botswana',
         'region_south_africa',
@@ -153,29 +226,54 @@ void main() {
   });
 
   for (var bots = 1; bots <= kMaxBots; bots++) {
-    test('a new game with $bots bot(s) gives every army its own land', () {
+    test('a new game with $bots bot(s) gives every army a whole country', () {
       final s = createInitialGameState(botCount: bots);
       expect(s.armies, hasLength(bots + 1));
       expect(s.armies.first.kind, ArmyKind.human);
       expect(s.armies.skip(1).every((a) => a.kind == ArmyKind.ai), isTrue);
       for (final a in s.armies) {
-        expect(s.tilesOwnedBy(a.id), kStartTileCount, reason: '${a.id}');
+        final own = s.territories.where((t) => t.ownerArmyId == a.id);
+        expect(
+          own.map((t) => t.id).toSet(),
+          graph.startCities[a.id.index].toSet(),
+        );
+        expect(own.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
         expect(a.diamondBalance, kStartDiamonds);
-      }
-      for (final a in s.armies) {
+        expect(a.totalUnitPool, kStartUnitPool);
         expect(a.cards, kStartCards);
         expect(a.hasDrawnCard, isFalse);
       }
     });
   }
 
-  test('every region has a Turkish and an English name', () {
+  test('there is no empty land: neutral cities hold 50 to 70 soldiers', () {
+    for (var seed = 0; seed < 5; seed++) {
+      final s = createInitialGameState(botCount: 3, random: Random(seed));
+      final neutral = s.territories.where((t) => t.ownerArmyId == null);
+      expect(neutral.length, kTerritoryCount - 4 * 4);
+      for (final t in neutral) {
+        expect(
+          t.unitCount,
+          inInclusiveRange(kNeutralCityMinUnits, kNeutralCityMaxUnits),
+        );
+      }
+      // Not all the same.
+      expect(neutral.map((t) => t.unitCount).toSet().length, greaterThan(5));
+    }
+  });
+
+  test('every city and country has a Turkish and an English name', () {
     for (final lang in ['tr', 'en']) {
       final bundle =
           jsonDecode(File('assets/locales/$lang.json').readAsStringSync())
               as Map<String, dynamic>;
       for (final t in graph.territories) {
         expect(bundle[t.name], isA<String>(), reason: '$lang ${t.name}');
+        expect(
+          bundle[graph.countryOf(t.id)],
+          isA<String>(),
+          reason: '$lang ${graph.countryOf(t.id)}',
+        );
       }
       for (final key in [
         'difficulty_title',
@@ -197,16 +295,36 @@ void main() {
     expect(SaveData.fromGameState(six).toGameState(), six);
   });
 
-  test('saves from older versions are rejected', () {
+  test('saves from older versions (the tile map) are rejected', () {
     final old = SaveData.fromGameState(createInitialGameState());
-    final legacy = SaveData(
-      territoriesJson: old.territoriesJson,
-      armiesJson: old.armiesJson,
-      currentTurn: old.currentTurn,
-      activeArmyId: old.activeArmyId,
-      phase: old.phase,
-      schemaVersion: 2,
+    for (final version in [2, 4]) {
+      final legacy = SaveData(
+        territoriesJson: old.territoriesJson,
+        armiesJson: old.armiesJson,
+        currentTurn: old.currentTurn,
+        activeArmyId: old.activeArmyId,
+        phase: old.phase,
+        schemaVersion: version,
+      );
+      expect(legacy.toGameState, throwsFormatException);
+    }
+  });
+
+  test('bomb areas stay inside the map and skip own cities', () {
+    final s = createInitialGameState(random: Random(1));
+    final target = s.territories.firstWhere(
+      (t) =>
+          t.ownerArmyId == null &&
+          t.adjacentIds.any(
+            (a) => s.territories[a].ownerArmyId == ArmyId.army1,
+          ),
     );
-    expect(legacy.toGameState, throwsFormatException);
+    final area = bombArea(s.territories, ArmyId.army1, target.id, 6);
+    expect(area, hasLength(6));
+    expect(area.first, target.id);
+    for (final id in area) {
+      expect(s.territories[id].ownerArmyId, isNot(ArmyId.army1));
+    }
+    expect(graph.getById(target.id).type, isA<TerritoryType>());
   });
 }

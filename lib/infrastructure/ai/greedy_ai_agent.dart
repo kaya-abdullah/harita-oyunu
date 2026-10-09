@@ -192,9 +192,9 @@ class GreedyAiAgent {
 
   /// Places the active bot's undeployed unit pool onto its land.
   ///
-  /// - veryEasy: on a random owned tile.
-  /// - medium: on the strongest frontier tile.
-  /// - hard: on the frontier tile closest to the enemy (biggest stack wins
+  /// - veryEasy: on a random owned city.
+  /// - medium: on the strongest frontier city.
+  /// - hard: on the frontier city closest to the enemy (biggest stack wins
   ///   ties), so the bot always pushes with one big army.
   GameState deployReinforcements(GameState state) {
     if (state.activeArmy.totalUnitPool <= 0) return state;
@@ -272,8 +272,13 @@ class GreedyAiAgent {
       for (final adj in s.adjacentIds) {
         final t = view.byId(adj);
         if (t.ownerArmyId == me) continue;
-        // Timid: only empty land or enemies it outnumbers two to one.
-        if (t.ownerArmyId == null || s.unitCount - 1 >= t.unitCount * 2) {
+        // Timid: only neutral cities it clearly beats, or enemies it
+        // outnumbers two to one.
+        final attackers = s.unitCount - 1;
+        final needed = t.ownerArmyId == null
+            ? t.unitCount * 1.2
+            : t.unitCount * 2;
+        if (attackers > t.unitCount && attackers >= needed) {
           options.add(AttackAction(sourceId: s.id, targetId: t.id));
         }
       }
@@ -302,6 +307,8 @@ class GreedyAiAgent {
         if (t.ownerArmyId == me) continue;
         final double score;
         if (t.ownerArmyId == null) {
+          // Neutral cities fight back: only attacks that win.
+          if (attackers <= t.unitCount) continue;
           score =
               10.0 +
               (view.isBase(t) ? 20 : 0) +
@@ -357,7 +364,7 @@ class GreedyAiAgent {
         if (enemy != null) {
           score += 40 + t.unitCount * 0.5;
           if (view.isBase(t)) score += 120;
-          // Finishing off isolated enemy tiles cuts the enemy apart.
+          // Finishing off isolated enemy citys cuts the enemy apart.
           if (!view.hasFriendlyNeighbour(t, enemy)) score += 15;
         } else {
           score += 12;
@@ -379,7 +386,7 @@ class GreedyAiAgent {
     return _consolidate(view);
   }
 
-  /// Moves an interior stack one step toward the nearest non-owned tile.
+  /// Moves an interior stack one step toward the nearest non-owned city.
   AttackAction? _consolidate(_MapView view) {
     final me = view.me;
     final toFront = view.distanceToFront(me);
@@ -447,23 +454,24 @@ class GreedyAiAgent {
     if (army.cardCount(AbilityType.soldierSpell) > 0) {
       final frontier = view.owned(me).where(view.isFrontier).where(_hasRoom);
       if (frontier.isNotEmpty) {
-        final tile = frontier.reduce(
+        final city = frontier.reduce(
           (a, b) => a.unitCount >= b.unitCount ? a : b,
         );
         return UseAbilityAction(
           ability: AbilityType.soldierSpell,
-          targetTerritoryId: tile.id,
+          targetTerritoryId: city.id,
         );
       }
     }
     return null;
   }
 
-  /// The target where [type] captures the most valuable area: next to the
-  /// bot's land, or — for the Atom and Nuclear bombs — any enemy tile.
+  /// The target where bomb [type] kills the most: next to the bot's land,
+  /// or — for the Atom and Nuclear bombs — any enemy city. Enemy soldiers
+  /// count more than neutral ones; `null` when no target is worth a card.
   int? _bestCaptureTarget(_MapView view, AbilityType type) {
     final me = view.me;
-    final count = kAbilityCaptureTiles[type]!;
+    final (count, damage) = kBombEffects[type]!;
     final candidates = <int>{};
     if (type.hitsAnywhere) {
       for (final t in view.state.territories) {
@@ -477,15 +485,16 @@ class GreedyAiAgent {
       }
     }
     int? best;
-    var bestValue = 0.0;
+    var bestValue = damage * 0.6;
     for (final id in candidates) {
       var value = 0.0;
-      for (final c in captureArea(view.state.territories, me, id, count)) {
-        final tile = view.byId(c);
-        final isEnemy = tile.ownerArmyId != null;
-        value += isEnemy ? 10 + tile.unitCount * 2.0 : 3;
-        if (view.isBase(tile)) value += isEnemy ? 60 : 25;
-        if (tile.hasDiamondMine) value += 50;
+      for (final c in bombArea(view.state.territories, me, id, count)) {
+        final city = view.byId(c);
+        final isEnemy = city.ownerArmyId != null;
+        final kills = bombKills(city, damage);
+        value += isEnemy ? kills * 2.0 : kills * 0.8;
+        if (view.isBase(city)) value += isEnemy ? 30 : 10;
+        if (city.hasDiamondMine) value += 20;
       }
       if (value > bestValue) {
         bestValue = value;
@@ -537,7 +546,7 @@ class GreedyAiAgent {
 
 // ─── _MapView ────────────────────────────────────────────────────────────────
 
-/// Read-only helper over a [GameState] with O(1) tile lookup and BFS maps.
+/// Read-only helper over a [GameState] with O(1) city lookup and BFS maps.
 class _MapView {
   _MapView(this.state)
     : me = state.activeArmyId,
@@ -558,21 +567,21 @@ class _MapView {
 
   bool isBase(Territory t) => t.type != TerritoryType.normal;
 
-  /// `true` when [t] touches a tile its owner does not own.
+  /// `true` when [t] touches a city its owner does not own.
   bool isFrontier(Territory t) =>
       t.adjacentIds.any((id) => byId(id).ownerArmyId != t.ownerArmyId);
 
   bool hasFriendlyNeighbour(Territory t, ArmyId army) =>
       t.adjacentIds.any((id) => byId(id).ownerArmyId == army);
 
-  /// Steps from every tile to the nearest tile owned by another army.
+  /// Steps from every city to the nearest city owned by another army.
   List<int> distanceToEnemies() => _bfs(
     state.territories.where(
       (t) => t.ownerArmyId != null && t.ownerArmyId != me,
     ),
   );
 
-  /// Steps from every tile to the nearest tile *not* owned by [army].
+  /// Steps from every city to the nearest city *not* owned by [army].
   List<int> distanceToFront(ArmyId army) =>
       _bfs(state.territories.where((t) => t.ownerArmyId != army));
 

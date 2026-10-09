@@ -101,9 +101,8 @@ abstract class EconomyService {
   /// [territories].
   ///
   /// - Adds [kDiamondsPerTurn] (80) diamonds.
-  /// - Adds [kSoldiersPerTurn] (3) soldier units plus one per
-  ///   [kTilesPerBonusSoldier] owned tiles (and [bonusSoldiers]) to
-  ///   [army.totalUnitPool].
+  /// - Adds [kSoldiersPerTurn] (15) soldier units plus [kSoldiersPerCity]
+  ///   (4) per owned city (and [bonusSoldiers]) to [army.totalUnitPool].
   ///
   /// Returns a new [Army] copy; the original is never mutated.
   Army applyTurnIncome(
@@ -157,11 +156,9 @@ class EconomyServiceImpl implements EconomyService {
     List<Territory> territories, {
     int bonusSoldiers = 0,
   }) {
-    final ownedTiles = territories.where((t) => t.ownerArmyId == army.id);
+    final cities = territories.where((t) => t.ownerArmyId == army.id).length;
     final soldiers =
-        kSoldiersPerTurn +
-        ownedTiles.length ~/ kTilesPerBonusSoldier +
-        bonusSoldiers;
+        kSoldiersPerTurn + cities * kSoldiersPerCity + bonusSoldiers;
 
     return army.copyWith(
       diamondBalance: army.diamondBalance + kDiamondsPerTurn,

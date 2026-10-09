@@ -76,7 +76,7 @@ void main() {
     ('africa_map', const Size(1280, 800)),
     ('africa_map_phone', const Size(400, 860)),
   ]) {
-    testWidgets('$name: Africa map renders and a tap selects a tile', (
+    testWidgets('$name: Africa map renders and a tap selects a city', (
       tester,
     ) async {
       await _pumpGame(tester, size, name);
@@ -150,7 +150,7 @@ void main() {
     await tester.pump();
     expect(game.userZoom, greaterThan(wheelBefore));
 
-    // A plain tap (even with a little jitter) still selects a tile.
+    // A plain tap (even with a little jitter) still selects a city.
     final container = ProviderScope.containerOf(
       tester.element(find.byType(GameScreen)),
     );
@@ -177,7 +177,7 @@ void main() {
     tester,
   ) async {
     final game = await _pumpGame(tester, const Size(400, 860), null);
-    final fit = game.camera.viewfinder.zoom;
+    final fit = game.camera.viewfinder.zoom / game.userZoom;
     game.zoomTo(3);
     expect(game.camera.viewfinder.zoom, closeTo(fit * 3, 1e-4));
     game.zoomTo(100);
@@ -235,10 +235,19 @@ Future<WarGame> _pumpGame(
     expect(find.byKey(const Key('ability_fireBomb')), findsOneWidget);
     expect(find.text('Direkt'), findsNothing);
 
-    // Tap the centre of the player's start tile on the Flame canvas.
+    // The game opens zoomed in on the player's country (Morocco).
     final game = tester
         .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
         .game!;
+    expect(game.userZoom, WarGame.startZoom);
+    final graph = game.mapComponent.graph;
+    final visible = game.camera.visibleWorldRect;
+    for (final id in graph.playerStartCities) {
+      final p = graph.getPosition(id);
+      expect(visible.contains(p), isTrue, reason: 'city $id on screen');
+    }
+
+    // Tap the player's first city on the Flame canvas.
     // Let the satellite picture decode (real async work), then redraw.
     for (var i = 0; i < 50 && !game.mapComponent.hasSatellite; i++) {
       await tester.runAsync(

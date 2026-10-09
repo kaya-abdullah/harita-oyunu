@@ -2,11 +2,13 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
-import 'package:flutter/painting.dart' show TextStyle;
+import 'package:flutter/painting.dart'
+    show TextPainter, TextSpan, TextStyle, TextDirection;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/theme/app_theme.dart';
@@ -21,44 +23,50 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 // ─── MapComponent ─────────────────────────────────────────────────────────────
 
 /// Renders Africa as it really looks from space — NASA's Blue Marble
-/// satellite picture (deserts, rain forests, savanna, ocean depths) with the
-/// real country borders — divided into many tiny square tiles ("minik
-/// kare"), and turns taps into [GameNotifier.onTerritoryTapped] calls.
+/// satellite picture (deserts, rain forests, savanna, ocean depths) — with
+/// its real countries, each split between its cities, and turns taps into
+/// [GameNotifier.onTerritoryTapped] calls.
 ///
-/// Drawing everything in one component (instead of one component per tile)
+/// Drawing everything in one component (instead of one component per city)
 /// keeps the frame cheap on phones. Layers, bottom to top:
 ///   - the satellite picture (until it has loaded — and in tests that do not
 ///     wait for it — a drawn map with earthy country colours instead);
-///   - thin country borders;
-///   - owned tiles tinted in their army colour (the land still shows
-///     through), clipped to the coastline, and a faint tile grid;
+///   - owned city areas tinted in their army colour (the land still shows
+///     through);
+///   - thin lines between the cities of a country, bold country borders;
 ///   - "walls": a dark line in each army's colour along its frontier;
-///   - gold bars on the bases (gold mines), cyan diamond-mine markers;
-///   - unit counts (only once zoomed in far enough to read them);
-///   - selection / neighbour / ability-target frames;
-///   - a dashed sea link to Madagascar.
+///   - a dashed sea route to Madagascar;
+///   - selection / neighbour / card-target outlines;
+///   - every city: a dot in its owner's colour (gold crown on gold mines,
+///     a diamond on diamond mines) and a label above it with a little
+///     soldier and the number of soldiers in the city.
+///
+/// The land layers only change when the game state does, so they are
+/// recorded once into a [Picture] and replayed every frame.
 class MapComponent extends PositionComponent
     with TapCallbacks, HasGameReference<WarGame> {
   MapComponent({required this.ref, TerritoryGraph? graph})
     : graph = graph ?? TerritoryGraph.bundled() {
     size = Vector2(this.graph.width, this.graph.height);
-    for (final t in this.graph.territories) {
-      final p = this.graph.positionOf(t.id);
-      _cellToId[_cellKey(p.col, p.row)] = t.id;
-    }
     _buildStaticLayers();
   }
 
   /// Riverpod widget reference used to read game state and send taps.
   final WidgetRef ref;
 
-  /// Static map layout (tile grid, regions, adjacency, outlines).
+  /// Static map layout (cities, countries, adjacency, outlines).
   final TerritoryGraph graph;
 
-  final Map<int, int> _cellToId = {};
   final Path _land = Path();
-  final Path _grid = Path();
   final Map<String, Path> _countries = {};
+  final List<Path> _cityPaths = [];
+  final List<Rect> _cityBounds = [];
+  final Path _cityLines = Path();
+
+  /// Border lines touching each city (shared with a neighbour or coast).
+  final List<List<CityBorder>> _bordersOf = [];
+  final List<Path> _borderPaths = [];
+  final Map<CityBorder, int> _borderIndex = {};
   final List<(Offset, Offset)> _seaLinks = [];
 
   /// The satellite picture (`assets/images/africa_satellite.jpg`), once
@@ -74,6 +82,11 @@ class MapComponent extends PositionComponent
 
   /// File of the satellite picture under `assets/images/`.
   static const String satelliteFile = 'africa_satellite.jpg';
+
+  // Cached land layer and what it was recorded for.
+  Picture? _landPicture;
+  List<Territory>? _landFor;
+  bool _landWithSatellite = false;
 
   @override
   Future<void> onLoad() async {
@@ -91,50 +104,61 @@ class MapComponent extends PositionComponent
         });
   }
 
-  static int _cellKey(int col, int row) => row * 1000 + col;
+  @override
+  void onRemove() {
+    _landPicture?.dispose();
+    _landPicture = null;
+    super.onRemove();
+  }
 
-  /// Unit counts are drawn only when a tile is at least this many screen
-  /// pixels wide.
-  static const double minReadableTilePx = 15;
+  /// Height of a city's soldier label on screen, in pixels (it never gets
+  /// bigger than [maxLabelWorld] map units, so labels shrink with the map
+  /// when zoomed far out).
+  static const double labelScreenPx = 15;
+
+  /// Largest height of a soldier label in map units.
+  static const double maxLabelWorld = 9;
 
   // ─── Paints ────────────────────────────────────────────────────────────────
 
   static final List<Paint> _armyPaints = [
-    for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(230),
+    for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(215),
   ];
   // Over the satellite picture the army colour is a tint, so forests and
   // deserts stay visible under conquered land.
   static final List<Paint> _armyTints = [
-    for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(180),
+    for (final c in AppTheme.armyPrimaries) Paint()..color = c.withAlpha(140),
   ];
-  static final Paint _satellitePaint = Paint()
-    ..filterQuality = FilterQuality.medium;
-  static final Paint _satGridPaint = Paint()
-    ..color = const Color(0x14FFFFFF)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 0.6;
-  static final Paint _satBorderPaint = Paint()
-    ..color = const Color(0x8CFFFFFF)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 0.9
-    ..strokeJoin = StrokeJoin.round;
+  static final List<Paint> _dotPaints = [
+    for (final c in AppTheme.armyPrimaries) Paint()..color = c,
+  ];
   static final List<Paint> _wallPaints = [
     for (final c in AppTheme.armyPrimaries)
       Paint()
-        ..color = Color.lerp(c, const Color(0xFF000000), 0.5)!
+        ..color = Color.lerp(c, const Color(0xFF000000), 0.35)!
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.6
-        ..strokeCap = StrokeCap.square,
+        ..strokeWidth = 4.4
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round,
   ];
-  static final Paint _goldDark = Paint()..color = const Color(0xFF8D6E00);
-  static final Paint _goldShine = Paint()..color = const Color(0xFFFFF59D);
+  static final Paint _satellitePaint = Paint()
+    ..filterQuality = FilterQuality.medium;
+  static final Paint _satCityLinePaint = Paint()
+    ..color = const Color(0x66FFFFFF)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.6;
+  static final Paint _satBorderPaint = Paint()
+    ..color = const Color(0xE6FFFFFF)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.4
+    ..strokeJoin = StrokeJoin.round;
   static final Paint _shorePaint = Paint()
     ..color = const Color(0xFFB3E5FC)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 7
     ..strokeJoin = StrokeJoin.round;
-  static final Paint _gridPaint = Paint()
-    ..color = const Color(0x1F000000)
+  static final Paint _cityLinePaint = Paint()
+    ..color = const Color(0x594E342E)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 0.6;
   static final Paint _borderHalo = Paint()
@@ -143,9 +167,9 @@ class MapComponent extends PositionComponent
     ..strokeWidth = 3
     ..strokeJoin = StrokeJoin.round;
   static final Paint _borderPaint = Paint()
-    ..color = const Color(0xB34E342E)
+    ..color = const Color(0xCC4E342E)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.1
+    ..strokeWidth = 1.3
     ..strokeJoin = StrokeJoin.round;
   static final Paint _seaLinkPaint = Paint()
     ..color = const Color(0xCCFFFFFF)
@@ -154,40 +178,33 @@ class MapComponent extends PositionComponent
   static final Paint _selectedPaint = Paint()
     ..color = const Color(0xFFFFD600)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 3;
+    ..strokeWidth = 3.2
+    ..strokeJoin = StrokeJoin.round;
+  static final Paint _selectedFill = Paint()..color = const Color(0x40FFD600);
   static final Paint _neighbourPaint = Paint()
     ..color = const Color(0xE6FFFFFF)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 2;
+    ..strokeWidth = 2
+    ..strokeJoin = StrokeJoin.round;
   static final Paint _abilityTargetPaint = Paint()
     ..color = const Color(0xFFFF6D00)
     ..style = PaintingStyle.stroke
-    ..strokeWidth = 2.2;
-  static final Paint _baseFill = Paint()..color = const Color(0xFFFFC107);
-  static final Paint _markerStroke = Paint()
+    ..strokeWidth = 2.2
+    ..strokeJoin = StrokeJoin.round;
+  static final Paint _neutralDot = Paint()..color = const Color(0xFFECEFF1);
+  static final Paint _dotRim = Paint()
     ..color = const Color(0xFF263238)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 1.2;
+  static final Paint _labelBg = Paint()..color = const Color(0xD9101820);
+  static final Paint _goldFill = Paint()..color = const Color(0xFFFFC107);
+  static final Paint _goldDark = Paint()..color = const Color(0xFF8D6E00);
   static final Paint _mineFill = Paint()..color = AppTheme.kDiamond;
   static final Paint _mineShine = Paint()..color = const Color(0xFFE0F7FA);
+  static final Paint _soldierPaint = Paint()..color = const Color(0xFFFFFFFF);
+  static final Paint _helmetPaint = Paint()..color = const Color(0xFF9CCC65);
 
-  static final TextPaint _lightText = TextPaint(
-    style: const TextStyle(
-      color: Color(0xFFFFFFFF),
-      fontSize: 11,
-      fontWeight: FontWeight.w800,
-      shadows: [Shadow(color: Color(0xCC000000), blurRadius: 2)],
-    ),
-  );
-  static final TextPaint _darkText = TextPaint(
-    style: const TextStyle(
-      color: Color(0xFF3E2723),
-      fontSize: 11,
-      fontWeight: FontWeight.w800,
-    ),
-  );
-
-  /// Earthy palette for neutral land, one colour per country.
+  /// Earthy palette for the drawn map, one colour per country.
   static const List<Color> _landPalette = [
     Color(0xFFE6D3A3),
     Color(0xFFD9C27E),
@@ -215,42 +232,36 @@ class MapComponent extends PositionComponent
         ..color = _landPalette[i % _landPalette.length];
     }
 
-    final s = graph.tileSize;
-    for (final t in graph.territories) {
-      final p = graph.positionOf(t.id);
-      final x = p.col * s;
-      final y = p.row * s;
-      // Right and bottom edges; neighbours draw the others.
-      _grid
-        ..moveTo(x + s, y)
-        ..lineTo(x + s, y + s)
-        ..moveTo(x, y + s)
-        ..lineTo(x + s, y + s);
-      if (!_cellToId.containsKey(_cellKey(p.col - 1, p.row))) {
-        _grid
-          ..moveTo(x, y)
-          ..lineTo(x, y + s);
+    for (final rings in graph.cityOutlines) {
+      final path = Path();
+      for (final ring in rings) {
+        path.addPolygon(ring, true);
       }
-      if (!_cellToId.containsKey(_cellKey(p.col, p.row - 1))) {
-        _grid
-          ..moveTo(x, y)
-          ..lineTo(x + s, y);
-      }
-      for (final adj in t.adjacentIds) {
-        if (adj > t.id && graph.isSeaLink(t.id, adj)) {
-          _seaLinks.add((p.offset, graph.positionOf(adj).offset));
+      _cityPaths.add(path);
+      _cityBounds.add(path.getBounds());
+      _bordersOf.add([]);
+    }
+
+    for (final border in graph.borders) {
+      final path = Path()..addPolygon(border.points, false);
+      _borderIndex[border] = _borderPaths.length;
+      _borderPaths.add(path);
+      _bordersOf[border.a].add(border);
+      final b = border.b;
+      if (b != null) {
+        _bordersOf[b].add(border);
+        if (graph.countryOf(border.a) == graph.countryOf(b)) {
+          _cityLines.addPath(path, Offset.zero);
         }
       }
+    }
+
+    for (final (a, b) in graph.seaLinks) {
+      _seaLinks.add((graph.getPosition(a), graph.getPosition(b)));
     }
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────────────
-
-  Rect _tileRect(int id) {
-    final p = graph.positionOf(id);
-    final s = graph.tileSize;
-    return Rect.fromLTWH(p.col * s, p.row * s, s, s);
-  }
 
   @override
   void render(Canvas canvas) {
@@ -260,14 +271,63 @@ class MapComponent extends PositionComponent
     final territories = state.territories;
 
     // Zoom level and visible area (both unknown before the game mounts).
-    var tilePx = 0.0;
+    var zoom = 1.0;
     Rect? visible;
     if (isMounted) {
-      tilePx = graph.tileSize * game.camera.viewfinder.zoom;
-      visible = game.camera.visibleWorldRect.inflate(graph.tileSize);
+      zoom = game.camera.viewfinder.zoom;
+      visible = game.camera.visibleWorldRect.inflate(20);
     }
 
-    // ── Land ────────────────────────────────────────────────────────────
+    // ── Land (cached) ───────────────────────────────────────────────────
+    final withSatellite = _satellite != null;
+    if (_landPicture == null ||
+        !identical(_landFor, territories) ||
+        _landWithSatellite != withSatellite) {
+      _landPicture?.dispose();
+      final recorder = PictureRecorder();
+      _drawLand(Canvas(recorder), territories);
+      _landPicture = recorder.endRecording();
+      _landFor = territories;
+      _landWithSatellite = withSatellite;
+    }
+    canvas.drawPicture(_landPicture!);
+
+    // ── Selection and card targets ──────────────────────────────────────
+    Territory? selected;
+    if (selectedId != null && selectedId < territories.length) {
+      selected = territories[selectedId];
+    }
+    final targeting = armed != null && armed != AbilityType.soldierSpell;
+    if (targeting) {
+      for (final t in territories) {
+        if (visible != null && !visible.overlaps(_cityBounds[t.id])) continue;
+        if (isValidTarget(state, ArmyId.army1, armed, t)) {
+          canvas.drawPath(_cityPaths[t.id], _abilityTargetPaint);
+        }
+      }
+    } else if (selected != null) {
+      for (final adj in selected.adjacentIds) {
+        canvas.drawPath(_cityPaths[adj], _neighbourPaint);
+      }
+    }
+    if (selected != null) {
+      canvas
+        ..drawPath(_cityPaths[selected.id], _selectedFill)
+        ..drawPath(_cityPaths[selected.id], _selectedPaint);
+    }
+
+    // ── Cities and their soldiers ───────────────────────────────────────
+    final label = math.min(maxLabelWorld, labelScreenPx / zoom);
+    for (final t in territories) {
+      final p = graph.getPosition(t.id);
+      if (visible != null && !visible.contains(p)) continue;
+      _drawCity(canvas, t, p, label);
+    }
+  }
+
+  /// Records the land layer: picture or drawn countries, army tints,
+  /// borders, walls and the sea route.
+  void _drawLand(Canvas canvas, List<Territory> territories) {
     final satellite = _satellite;
     if (satellite != null) {
       canvas.drawImageRect(
@@ -281,165 +341,184 @@ class MapComponent extends PositionComponent
         graph.satelliteRect,
         _satellitePaint,
       );
-      _countries.forEach((_, path) => canvas.drawPath(path, _satBorderPaint));
     } else {
       canvas.drawPath(_land, _shorePaint);
       _countries.forEach((key, path) {
         canvas.drawPath(path, _countryPaints[key]!);
       });
-      // Country borders lie under the armies, whose walls mark their land.
+    }
+
+    final tints = satellite != null ? _armyTints : _armyPaints;
+    for (final t in territories) {
+      final owner = t.ownerArmyId;
+      if (owner == null) continue;
+      canvas.drawPath(_cityPaths[t.id], tints[owner.index]);
+    }
+
+    if (satellite != null) {
+      canvas.drawPath(_cityLines, _satCityLinePaint);
+      _countries.forEach((_, path) => canvas.drawPath(path, _satBorderPaint));
+    } else {
+      canvas.drawPath(_cityLines, _cityLinePaint);
       _countries.forEach((_, path) => canvas.drawPath(path, _borderHalo));
       _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
     }
 
-    final tints = satellite != null ? _armyTints : _armyPaints;
-    canvas
-      ..save()
-      ..clipPath(_land);
-    for (final t in territories) {
-      final owner = t.ownerArmyId;
-      if (owner == null) continue;
-      canvas.drawRect(_tileRect(t.id), tints[owner.index]);
-    }
-    canvas.drawPath(_grid, satellite != null ? _satGridPaint : _gridPaint);
     _drawWalls(canvas, territories);
-    canvas.restore();
     for (final (a, b) in _seaLinks) {
       _drawDashed(canvas, a, b);
     }
-
-    // ── Markers, numbers, frames ────────────────────────────────────────
-    Territory? selected;
-    if (selectedId != null && selectedId < territories.length) {
-      selected = territories[selectedId];
-    }
-    final showNumbers = tilePx >= minReadableTilePx;
-    final targeting = armed != null && armed != AbilityType.soldierSpell;
-
-    for (final t in territories) {
-      final rect = _tileRect(t.id);
-      if (visible != null && !visible.overlaps(rect)) continue;
-
-      if (t.hasGoldMine) {
-        _drawGold(canvas, rect, big: t.type == TerritoryType.bigBase);
-      }
-      if (t.hasDiamondMine) _drawMine(canvas, rect);
-
-      if (showNumbers && t.unitCount > 0) {
-        (t.ownerArmyId == null && satellite == null ? _darkText : _lightText)
-            .render(
-              canvas,
-              '${t.unitCount}',
-              Vector2(rect.center.dx, rect.center.dy + 1),
-              anchor: Anchor.center,
-            );
-      }
-
-      if (targeting && isValidTarget(state, ArmyId.army1, armed, t)) {
-        canvas.drawRect(rect.deflate(2), _abilityTargetPaint);
-      } else if (selected != null && selected.adjacentIds.contains(t.id)) {
-        canvas.drawRect(rect.deflate(1.5), _neighbourPaint);
-      }
-    }
-
-    if (selected != null) {
-      canvas.drawRect(_tileRect(selected.id).deflate(1), _selectedPaint);
-    }
   }
 
-  /// Frontier "walls": along every tile edge between different owners, a
-  /// dark line in the colour of each army that owns a side, drawn just
-  /// inside its own tile so neighbouring armies' walls sit side by side.
+  /// Frontier "walls": along every border between different owners (and
+  /// along the coast), a dark line in the colour of the army on each side,
+  /// kept inside its own city so neighbouring armies' walls sit side by
+  /// side.
   void _drawWalls(Canvas canvas, List<Territory> territories) {
-    final s = graph.tileSize;
-    const inset = 1.3;
-    final paths = <int, Path>{};
-    void wall(ArmyId? owner, Offset a, Offset b) {
-      if (owner == null) return;
-      final path = paths.putIfAbsent(owner.index, Path.new);
-      path
-        ..moveTo(a.dx, a.dy)
-        ..lineTo(b.dx, b.dy);
-    }
-
     for (final t in territories) {
-      final p = graph.positionOf(t.id);
-      final x = p.col * s;
-      final y = p.row * s;
-      final right = _cellToId[_cellKey(p.col + 1, p.row)];
-      final below = _cellToId[_cellKey(p.col, p.row + 1)];
-      final left = _cellToId[_cellKey(p.col - 1, p.row)];
-      final above = _cellToId[_cellKey(p.col, p.row - 1)];
-      final o = t.ownerArmyId;
-      if (o == null) continue;
-      if (right == null || territories[right].ownerArmyId != o) {
-        wall(o, Offset(x + s - inset, y), Offset(x + s - inset, y + s));
+      final owner = t.ownerArmyId;
+      if (owner == null) continue;
+      final frontier = Path();
+      var any = false;
+      for (final border in _bordersOf[t.id]) {
+        final other = border.a == t.id ? border.b : border.a;
+        if (other != null && territories[other].ownerArmyId == owner) {
+          continue;
+        }
+        frontier.addPath(_borderPaths[_borderIndex[border]!], Offset.zero);
+        any = true;
       }
-      if (below == null || territories[below].ownerArmyId != o) {
-        wall(o, Offset(x, y + s - inset), Offset(x + s, y + s - inset));
-      }
-      if (left == null || territories[left].ownerArmyId != o) {
-        wall(o, Offset(x + inset, y), Offset(x + inset, y + s));
-      }
-      if (above == null || territories[above].ownerArmyId != o) {
-        wall(o, Offset(x, y + inset), Offset(x + s, y + inset));
-      }
-    }
-    paths.forEach((i, path) => canvas.drawPath(path, _wallPaints[i]));
-  }
-
-  /// Gold bars (a gold mine) in the top-left corner of [rect]; two bars on
-  /// a big base.
-  void _drawGold(Canvas canvas, Rect rect, {required bool big}) {
-    final w = rect.width * (big ? 0.5 : 0.56);
-    final h = w * 0.42;
-    void bar(Offset topLeft) {
-      final r = Rect.fromLTWH(topLeft.dx, topLeft.dy, w, h);
-      final shape = Path()
-        ..moveTo(r.left + w * 0.18, r.top)
-        ..lineTo(r.right - w * 0.18, r.top)
-        ..lineTo(r.right, r.bottom)
-        ..lineTo(r.left, r.bottom)
-        ..close();
+      if (!any) continue;
       canvas
-        ..drawPath(shape, _goldDark)
-        ..drawPath(shape.shift(const Offset(0, -0.8)), _baseFill)
-        ..drawRect(
-          Rect.fromLTWH(r.left + w * 0.25, r.top + h * 0.15, w * 0.3, h * 0.2),
-          _goldShine,
-        )
-        ..drawPath(shape, _markerStroke);
-    }
-
-    final origin = Offset(rect.left + 1.5, rect.top + 2.5);
-    if (big) {
-      bar(origin.translate(0, h * 0.9));
-      bar(origin.translate(w * 0.5, h * 0.9));
-      bar(origin.translate(w * 0.25, 0));
-    } else {
-      bar(origin);
+        ..save()
+        ..clipPath(_cityPaths[t.id])
+        ..drawPath(frontier, _wallPaints[owner.index])
+        ..restore();
     }
   }
 
-  /// A small cut-diamond marker in the top-right corner of [rect].
-  void _drawMine(Canvas canvas, Rect rect) {
-    final w = rect.width * 0.36;
-    final cx = rect.right - w / 2 - 1.5;
-    final top = rect.top + 2.0;
+  /// One city: a dot in its owner's colour with mine markers, and above it
+  /// a dark label with a little soldier and the city's soldier count.
+  /// [h] is the label height in map units.
+  void _drawCity(Canvas canvas, Territory t, Offset p, double h) {
+    final r = h * 0.36;
+    final owner = t.ownerArmyId;
+    canvas
+      ..drawCircle(p, r, owner == null ? _neutralDot : _dotPaints[owner.index])
+      ..drawCircle(p, r, _dotRim);
+    if (t.hasGoldMine) _drawCrown(canvas, p.translate(0, -r * 0.1), r * 0.8);
+    if (t.hasDiamondMine) _drawGem(canvas, p.translate(r * 1.4, 0), r * 0.9);
+
+    final text = _countText(t.unitCount);
+    final scale = h / _labelFontPx;
+    final textW = text.width * scale;
+    final soldierW = h * 0.55;
+    final padX = h * 0.22;
+    final w = padX + soldierW + h * 0.12 + textW + padX;
+    final top = p.dy - r - h * 0.15 - h;
+    final box = RRect.fromRectAndRadius(
+      Rect.fromLTWH(p.dx - w / 2, top, w, h),
+      Radius.circular(h * 0.35),
+    );
+    canvas.drawRRect(box, _labelBg);
+    if (owner != null) {
+      canvas.drawRRect(
+        box,
+        Paint()
+          ..color = AppTheme.armyPrimaries[owner.index]
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = h * 0.1,
+      );
+    }
+    _drawSoldier(
+      canvas,
+      Offset(box.left + padX + soldierW / 2, top + h / 2),
+      h * 0.8,
+    );
+    canvas
+      ..save()
+      ..translate(box.left + padX + soldierW + h * 0.12, top + h * 0.06)
+      ..scale(scale);
+    text.paint(canvas, Offset.zero);
+    canvas.restore();
+  }
+
+  /// Font size the count labels are laid out at (then scaled).
+  static const double _labelFontPx = 20;
+
+  final Map<int, TextPainter> _countTexts = {};
+
+  TextPainter _countText(int count) => _countTexts.putIfAbsent(count, () {
+    if (_countTexts.length > 600) _countTexts.clear();
+    return TextPainter(
+      text: TextSpan(
+        text: '$count',
+        style: const TextStyle(
+          color: Color(0xFFFFFFFF),
+          fontSize: _labelFontPx,
+          fontWeight: FontWeight.w800,
+          height: 1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  });
+
+  /// A little soldier ("asker") [h] tall centred on [c]: helmet, head,
+  /// body.
+  void _drawSoldier(Canvas canvas, Offset c, double h) {
+    final top = c.dy - h / 2;
+    final body = Path()
+      ..moveTo(c.dx - h * 0.26, c.dy + h / 2)
+      ..lineTo(c.dx - h * 0.2, top + h * 0.5)
+      ..quadraticBezierTo(c.dx, top + h * 0.42, c.dx + h * 0.2, top + h * 0.5)
+      ..lineTo(c.dx + h * 0.26, c.dy + h / 2)
+      ..close();
+    canvas
+      ..drawPath(body, _soldierPaint)
+      ..drawCircle(Offset(c.dx, top + h * 0.3), h * 0.14, _soldierPaint)
+      ..drawArc(
+        Rect.fromCircle(center: Offset(c.dx, top + h * 0.27), radius: h * 0.2),
+        math.pi,
+        math.pi,
+        true,
+        _helmetPaint,
+      );
+  }
+
+  /// A gold crown (gold mine) of half-width [s] centred on [c].
+  void _drawCrown(Canvas canvas, Offset c, double s) {
+    final crown = Path()
+      ..moveTo(c.dx - s, c.dy + s * 0.5)
+      ..lineTo(c.dx - s, c.dy - s * 0.4)
+      ..lineTo(c.dx - s * 0.5, c.dy)
+      ..lineTo(c.dx, c.dy - s * 0.7)
+      ..lineTo(c.dx + s * 0.5, c.dy)
+      ..lineTo(c.dx + s, c.dy - s * 0.4)
+      ..lineTo(c.dx + s, c.dy + s * 0.5)
+      ..close();
+    canvas
+      ..drawPath(crown.shift(Offset(0, s * 0.12)), _goldDark)
+      ..drawPath(crown, _goldFill);
+  }
+
+  /// A small cut diamond (diamond mine) of width [w] centred on [c].
+  void _drawGem(Canvas canvas, Offset c, double w) {
+    final top = c.dy - w / 2;
     final gem = Path()
-      ..moveTo(cx - w / 2, top + w * 0.3)
-      ..lineTo(cx - w * 0.25, top)
-      ..lineTo(cx + w * 0.25, top)
-      ..lineTo(cx + w / 2, top + w * 0.3)
-      ..lineTo(cx, top + w)
+      ..moveTo(c.dx - w / 2, top + w * 0.3)
+      ..lineTo(c.dx - w * 0.25, top)
+      ..lineTo(c.dx + w * 0.25, top)
+      ..lineTo(c.dx + w / 2, top + w * 0.3)
+      ..lineTo(c.dx, top + w)
       ..close();
     canvas
       ..drawPath(gem, _mineFill)
       ..drawRect(
-        Rect.fromLTWH(cx - w * 0.2, top + w * 0.08, w * 0.15, w * 0.15),
+        Rect.fromLTWH(c.dx - w * 0.2, top + w * 0.08, w * 0.15, w * 0.15),
         _mineShine,
       )
-      ..drawPath(gem, _markerStroke);
+      ..drawPath(gem, _dotRim);
   }
 
   void _drawDashed(Canvas canvas, Offset a, Offset b) {
@@ -454,17 +533,30 @@ class MapComponent extends PositionComponent
 
   // ─── Tap handling ──────────────────────────────────────────────────────────
 
-  /// Returns the tile id under [local] (map coordinates), or `null` for sea.
-  int? tileAt(Vector2 local) {
-    if (local.x < 0 || local.y < 0) return null;
-    final col = local.x ~/ graph.tileSize;
-    final row = local.y ~/ graph.tileSize;
-    return _cellToId[_cellKey(col, row)];
+  /// Returns the city whose area holds [local] (map coordinates) — or,
+  /// for a tap just off the coast, the nearest city within reach — or
+  /// `null` for open sea.
+  int? cityAt(Vector2 local) {
+    final p = Offset(local.x, local.y);
+    for (var i = 0; i < _cityPaths.length; i++) {
+      if (_cityBounds[i].contains(p) && _cityPaths[i].contains(p)) return i;
+    }
+    // Taps on a city label (drawn above the dot) count for that city.
+    int? best;
+    var bestD = 12.0;
+    for (var i = 0; i < _cityPaths.length; i++) {
+      final d = (graph.getPosition(i) - p).distance;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
   }
 
   @override
   void onTapUp(TapUpEvent event) {
-    final id = tileAt(event.localPosition);
+    final id = cityAt(event.localPosition);
     if (id == null) return;
     // Select / attack / move / deploy / fire armed ability, depending on
     // the current selection (see GameNotifier.onTerritoryTapped).

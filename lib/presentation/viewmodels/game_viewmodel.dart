@@ -4,8 +4,7 @@
 /// the domain services together and expose reactive game state to the UI.
 library;
 
-import 'dart:collection';
-import 'dart:math' show min;
+import 'dart:math' show Random, min;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -674,36 +673,40 @@ final isVictoryProvider = Provider<bool>(
 
 // ─── Initial state factory ────────────────────────────────────────────────────
 
-/// Constructs the [GameState] for a brand-new game on the Africa tile map.
+/// Constructs the [GameState] for a brand-new game on the Africa city map.
 ///
-/// Army 1 (human, blue) starts in Casablanca; the [botCount] bots (1 …
-/// [kMaxBots]) start at the next start bases of the map (Cape Town, Cairo,
-/// Lagos, Mogadishu, Kinshasa, Dakar). Each army owns the [kStartTileCount]
-/// tiles closest to its start base, with [kStartUnitsPerTile] units on each.
-/// Everything else starts neutral.
+/// Army 1 (human, blue) owns Morocco ("kendisi ülke olsun"): all its cities,
+/// [kStartUnitsPerCity] soldiers in each. The [botCount] bots (1 …
+/// [kMaxBots]) own the next start countries of the map — the first one,
+/// Mauritania, close to the player. Every other city is neutral and holds
+/// [kNeutralCityMinUnits] … [kNeutralCityMaxUnits] soldiers (picked with
+/// [random]), so there is no empty land.
 ///
-/// Each army begins with [kStartDiamonds] diamonds, 10 reserve soldiers and
-/// [kStartCards] (two Fire Bomb cards).
+/// Each army begins with [kStartDiamonds] diamonds, [kStartUnitPool]
+/// reserve soldiers and [kStartCards] (two Fire Bomb cards).
 GameState createInitialGameState({
   AiDifficulty difficulty = AiDifficulty.medium,
   int botCount = 1,
+  Random? random,
 }) {
+  final rng = random ?? Random();
   final graph = TerritoryGraph.bundled();
-  final maxBots = min(kMaxBots, graph.startIds.length - 1);
+  final maxBots = min(kMaxBots, graph.startCities.length - 1);
   final count = 1 + botCount.clamp(1, maxBots).toInt();
   final ids = ArmyId.values.take(count).toList();
 
-  final owner = <int, ArmyId>{};
-  for (var i = 0; i < count; i++) {
-    for (final id in _startZone(graph, graph.startIds[i], owner.keys.toSet())) {
-      owner[id] = ids[i];
-    }
-  }
+  final owner = <int, ArmyId>{
+    for (var i = 0; i < count; i++)
+      for (final id in graph.startCities[i]) id: ids[i],
+  };
 
   final territories = [
     for (final t in graph.territories)
       t.copyWith(
-        unitCount: owner[t.id] != null ? kStartUnitsPerTile : 0,
+        unitCount: owner[t.id] != null
+            ? kStartUnitsPerCity
+            : kNeutralCityMinUnits +
+                  rng.nextInt(kNeutralCityMaxUnits - kNeutralCityMinUnits + 1),
         ownerArmyId: owner[t.id],
       ),
   ];
@@ -716,7 +719,7 @@ GameState createInitialGameState({
           id: id,
           kind: id == ArmyId.army1 ? ArmyKind.human : ArmyKind.ai,
           diamondBalance: kStartDiamonds,
-          totalUnitPool: 10,
+          totalUnitPool: kStartUnitPool,
           cards: kStartCards,
         ),
     ],
@@ -726,21 +729,4 @@ GameState createInitialGameState({
     winnerId: null,
     difficulty: difficulty,
   );
-}
-
-// ─── Initial-state helpers ────────────────────────────────────────────────────
-
-/// The [kStartTileCount] tiles nearest (breadth-first) to [startId] that are
-/// not [taken] by another army.
-Set<int> _startZone(TerritoryGraph graph, int startId, Set<int> taken) {
-  final zone = <int>{startId};
-  final queue = Queue<int>()..add(startId);
-  while (queue.isNotEmpty && zone.length < kStartTileCount) {
-    for (final adj in graph.getById(queue.removeFirst()).adjacentIds) {
-      if (zone.length >= kStartTileCount) break;
-      if (taken.contains(adj)) continue;
-      if (zone.add(adj)) queue.add(adj);
-    }
-  }
-  return zone;
 }

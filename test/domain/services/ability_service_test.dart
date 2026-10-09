@@ -14,9 +14,9 @@ import 'package:harita/domain/services/economy_service.dart';
 
 const _size = 10;
 
-/// A 10 × 10 grid of tiles (4-neighbours). The player owns the left
-/// column, bot 1 the right column; the rest is neutral. Tile 1 holds a
-/// diamond mine.
+/// A 10 × 10 grid of cities (4-neighbours), 60 soldiers each. The player
+/// owns the left column, bot 1 the right column; the rest is neutral.
+/// City 1 holds a diamond mine.
 GameState _grid({
   Map<AbilityType, int> cards = const {},
   int botDiamonds = 500,
@@ -28,7 +28,7 @@ GameState _grid({
         for (var c = 0; c < _size; c++)
           Territory(
             id: id(c, r),
-            name: 'tile_${id(c, r)}',
+            name: 'city_${id(c, r)}',
             type: TerritoryType.normal,
             adjacentIds: [
               if (r > 0) id(c, r - 1),
@@ -36,7 +36,7 @@ GameState _grid({
               if (c < _size - 1) id(c + 1, r),
               if (r < _size - 1) id(c, r + 1),
             ],
-            unitCount: 5,
+            unitCount: 60,
             ownerArmyId: c == 0
                 ? ArmyId.army1
                 : c == _size - 1
@@ -79,18 +79,48 @@ void main() {
 
   int owned(GameState s) => s.tilesOwnedBy(ArmyId.army1);
 
-  test('bomb cards capture 2 / 8 / 25 tiles next to your land and are used '
-      'up', () {
-    for (final (type, count) in [
-      (AbilityType.fireBomb, kFireBombTiles),
-      (AbilityType.bombardment, kBombardmentTiles),
-      (AbilityType.megaBomba, kMegaBombaTiles),
+  /// Cities that lost soldiers between [before] and [after].
+  List<int> hit(GameState before, GameState after) => [
+    for (var i = 0; i < after.territories.length; i++)
+      if (after.territories[i].unitCount < before.territories[i].unitCount) i,
+  ];
+
+  test('bomb cards kill 30 / 40 / 60 soldiers in 1 / 2 / 3 cities next to '
+      'your land and are used up', () {
+    for (final type in [
+      AbilityType.fireBomb,
+      AbilityType.bombardment,
+      AbilityType.megaBomba,
     ]) {
-      final s = play(_grid(cards: {type: 2}), type, 11);
-      expect(owned(s), _size + count, reason: '$type');
-      expect(s.territories[11].ownerArmyId, ArmyId.army1);
+      final (cities, damage) = kBombEffects[type]!;
+      final before = _grid(cards: {type: 2});
+      final s = play(before, type, 11);
+      final bombed = hit(before, s);
+      expect(bombed, hasLength(cities), reason: '$type');
+      expect(bombed, contains(11));
+      for (final id in bombed) {
+        expect(
+          s.territories[id].unitCount,
+          max(kBombedCityMinUnits, 60 - damage),
+          reason: '$type',
+        );
+      }
+      // Bombs never take land: owners stay the same.
+      expect(owned(s), _size, reason: '$type');
+      expect(s.territories[11].ownerArmyId, isNull);
       expect(s.army1.cardCount(type), 1, reason: 'one card is used up');
     }
+    expect(kBombEffects[AbilityType.fireBomb], (1, 30));
+    expect(kBombEffects[AbilityType.bombardment], (2, 40));
+    expect(kBombEffects[AbilityType.megaBomba], (3, 60));
+  });
+
+  test('a bombed city always keeps one soldier and its owner', () {
+    var s = _grid(cards: {AbilityType.megaBomba: 2});
+    s = play(s, AbilityType.megaBomba, 11);
+    s = play(s, AbilityType.megaBomba, 11);
+    expect(s.territories[11].unitCount, kBombedCityMinUnits);
+    expect(s.territories[11].ownerArmyId, isNull);
   });
 
   test('the same card can be played again while you hold more', () {
@@ -104,21 +134,26 @@ void main() {
     );
   });
 
-  test('Atom and Nuclear bombs hit anywhere on the map', () {
-    final atom = play(
-      _grid(cards: {AbilityType.atomBomb: 1}),
-      AbilityType.atomBomb,
-      _size * _size - 1,
+  test('Atom and Nuclear bombs hit anywhere on the map, enemies first', () {
+    final before = _grid(
+      cards: {AbilityType.atomBomb: 1, AbilityType.nuclearBomb: 1},
     );
-    expect(owned(atom), _size + kAtomBombTiles);
-    expect(atom.territories[_size * _size - 1].ownerArmyId, ArmyId.army1);
+    final atom = play(before, AbilityType.atomBomb, 89);
+    final atomHit = hit(before, atom);
+    expect(atomHit, hasLength(4));
+    expect(atomHit, contains(89));
+    // The bot's cities next to the target are hit before neutral ones.
+    expect(
+      atomHit.where((id) => atom.territories[id].ownerArmyId == ArmyId.army2),
+      hasLength(3),
+    );
+    for (final id in atomHit) {
+      expect(atom.territories[id].unitCount, 1);
+    }
 
-    final nuke = play(
-      _grid(cards: {AbilityType.nuclearBomb: 1}),
-      AbilityType.nuclearBomb,
-      55,
-    );
-    expect(owned(nuke), _size + kNuclearBombTiles);
+    final nuke = play(before, AbilityType.nuclearBomb, 55);
+    expect(hit(before, nuke), hasLength(6));
+    expect(owned(nuke), _size);
 
     // A Fire Bomb may not do that.
     expect(
@@ -131,22 +166,23 @@ void main() {
     );
   });
 
-  test('capturing a diamond mine with a card pays out', () {
+  test('bombing a diamond mine pays nothing — it must be conquered', () {
     final s = play(
       _grid(cards: {AbilityType.fireBomb: 1}),
       AbilityType.fireBomb,
       1,
     );
-    expect(s.army1.diamondBalance, kDiamondMineReward);
+    expect(s.army1.diamondBalance, 0);
+    expect(s.territories[1].unitCount, 60 - kFireBombDamage);
   });
 
-  test('Asker Büyüsü adds soldiers to an own tile only', () {
+  test('Asker Büyüsü adds 30 soldiers to an own city only', () {
     final s = play(
       _grid(cards: {AbilityType.soldierSpell: 1}),
       AbilityType.soldierSpell,
       10,
     );
-    expect(s.territories[10].unitCount, 5 + kSoldierSpellUnits);
+    expect(s.territories[10].unitCount, 60 + kSoldierSpellUnits);
     expect(
       () => play(
         _grid(cards: {AbilityType.soldierSpell: 1}),
@@ -157,7 +193,7 @@ void main() {
     );
   });
 
-  test('Haraç Kes takes 200 diamonds from the owner of the tile', () {
+  test('Haraç Kes takes 200 diamonds from the owner of the city', () {
     final s = play(
       _grid(cards: {AbilityType.tribute: 1}),
       AbilityType.tribute,
@@ -175,7 +211,7 @@ void main() {
     expect(poor.army1.diamondBalance, 60);
     expect(poor.army2.diamondBalance, 0);
 
-    // Neutral tiles have nobody to pay.
+    // Neutral cities have nobody to pay.
     expect(
       () =>
           play(_grid(cards: {AbilityType.tribute: 1}), AbilityType.tribute, 5),

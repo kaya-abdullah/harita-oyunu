@@ -35,7 +35,7 @@ class GameState {
     assert(armies.isNotEmpty, 'A game needs at least one army.');
   }
 
-  /// All map territories (Africa tiles).  Order is stable (index == territory id).
+  /// All map territories (Africa cities).  Order is stable (index == id).
   final List<Territory> territories;
 
   /// Every army in the game, in turn order. The first one is the human
@@ -82,11 +82,11 @@ class GameState {
   /// Returns `true` when a winner has been declared.
   bool get isOver => phase == GamePhase.victory;
 
-  /// Number of tiles owned by [id].
+  /// Number of cities owned by [id].
   int tilesOwnedBy(ArmyId id) =>
       territories.where((t) => t.ownerArmyId == id).length;
 
-  /// Ids of the armies that still own at least one tile, in turn order.
+  /// Ids of the armies that still own at least one city, in turn order.
   List<ArmyId> get armiesAlive {
     final owners = {for (final t in territories) t.ownerArmyId};
     return [

@@ -1,7 +1,7 @@
 /// ResourceBar HUD widget for Harita: Kendi İmparatorluğunu Kur.
 ///
 /// Shows the player's diamond (Elmas) balance and, for every army in the
-/// game, a colour chip with the number of tiles it owns. The army whose turn
+/// game, a colour chip with the number of cities it owns. The army whose turn
 /// it is gets a highlighted border; eliminated armies are greyed out.
 library;
 
@@ -14,7 +14,7 @@ import 'package:harita/domain/models/army.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 
-/// Horizontal bar with the diamond balance and per-army tile counts.
+/// Horizontal bar with the diamond balance and per-army city counts.
 class ResourceBar extends ConsumerWidget {
   const ResourceBar({super.key});
 
@@ -118,7 +118,7 @@ class _DiamondChip extends StatelessWidget {
   }
 }
 
-/// One army: colour, short name and tile count.
+/// One army: colour, short name and city count.
 class _ArmyChip extends StatelessWidget {
   const _ArmyChip({
     super.key,

@@ -6,6 +6,8 @@
 /// Requirements: 3.3, 11.1, 11.2, 11.3
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -100,7 +102,9 @@ class TerritoryInfoPanel extends ConsumerWidget {
             .toList();
 
         // ── Resolve the panel title (territory name) ──────────────────────
-        final territoryName = localeService.translate(territory.name, locale);
+        final territoryName =
+            '${localeService.translate(territory.name, locale)} · '
+            '${localeService.translate(TerritoryGraph.bundled().countryOf(territory.id), locale)}';
 
         return _InfoCard(
           territoryName: territoryName,
@@ -140,17 +144,15 @@ class TerritoryInfoPanel extends ConsumerWidget {
     );
   }
 
-  /// Arrow pointing from tile [from] to its neighbour [to] on the grid, so
-  /// neighbouring squares of the same country can be told apart.
+  /// Arrow pointing from city [from] towards its neighbour [to] on the map.
   String _direction(int from, int to) {
     final graph = TerritoryGraph.bundled();
-    final a = graph.positionOf(from);
-    final b = graph.positionOf(to);
     if (graph.isSeaLink(from, to)) return '≈';
-    if (b.row < a.row) return '↑';
-    if (b.row > a.row) return '↓';
-    if (b.col < a.col) return '←';
-    return '→';
+    final d = graph.getPosition(to) - graph.getPosition(from);
+    // Eight compass arrows; map y grows downwards.
+    const arrows = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'];
+    final octant = ((d.direction / (math.pi / 4)).round()) % 8;
+    return arrows[octant];
   }
 
   /// Declares an attack from [sourceId] into [targetId]. The notifier emits
@@ -217,7 +219,7 @@ class _InfoCard extends StatelessWidget {
   /// (label, value) of the terrain row (forest, desert, …).
   final (String, String) terrainText;
 
-  /// The tile's terrain (picks the row's icon).
+  /// The city's terrain (picks the row's icon).
   final Terrain terrain;
 
   @override

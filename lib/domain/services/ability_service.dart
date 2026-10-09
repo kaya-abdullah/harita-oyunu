@@ -11,7 +11,6 @@ import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/domain/models/territory.dart';
-import 'package:harita/domain/services/economy_service.dart';
 
 // ─── Exceptions ──────────────────────────────────────────────────────────────
 
@@ -34,7 +33,7 @@ class CardAlreadyDrawnException implements Exception {
   String toString() => 'CardAlreadyDrawnException';
 }
 
-/// Thrown when a card is aimed at a tile it cannot be used on.
+/// Thrown when a card is aimed at a city it cannot be used on.
 class InvalidTargetException implements Exception {
   const InvalidTargetException({
     required this.targetTerritoryId,
@@ -78,12 +77,14 @@ const Map<AbilityType, int> kStartCards = {
 abstract class AbilityService {
   /// Plays one [ability] card of [armyId] on [targetTerritoryId].
   ///
-  /// - Capture cards take the target and the nearest tiles around it that
-  ///   are not the army's own (see [captureArea]): Ateş Bombası 2,
-  ///   Bombardıman 8, Mega Bomba 25 (target next to the army's land),
-  ///   Atom Bombası 25 and Nükleer Bomba 40 (anywhere on the map). Captured
-  ///   diamond mines pay [kDiamondMineReward], gold mines [kGoldMineReward].
-  /// - Asker Büyüsü adds [kSoldierSpellUnits] to an own tile.
+  /// - Bomb cards kill soldiers in the target city and the nearest cities
+  ///   around it that are not the army's own (see [bombArea]): Ateş Bombası
+  ///   30 in 1 city, Bombardıman 40 in 2, Mega Bomba 60 in 3 (target next
+  ///   to the army's land), Atom Bombası 80 in 4 and Nükleer Bomba 100 in 6
+  ///   (anywhere on the map). A bombed city always keeps
+  ///   [kBombedCityMinUnits] soldier and its owner: land is only taken by
+  ///   attacking it with soldiers.
+  /// - Asker Büyüsü adds [kSoldierSpellUnits] to an own city.
   /// - Haraç Kes takes up to [kTributeDiamonds] from the target's owner.
   ///
   /// Throws [NoCardException] without such a card in hand and
@@ -154,17 +155,18 @@ class AbilityServiceImpl implements AbilityService {
       case AbilityType.megaBomba:
       case AbilityType.atomBomb:
       case AbilityType.nuclearBomb:
-        final next = state
+        final (cities, damage) = kBombEffects[ability]!;
+        return state
             .withArmy(spent)
             .copyWith(
-              territories: captureTiles(
+              territories: bombCities(
                 state.territories,
                 armyId,
                 target.id,
-                kAbilityCaptureTiles[ability]!,
+                cities,
+                damage,
               ),
             );
-        return awardMineRewards(state, next, armyId);
     }
   }
 
@@ -193,7 +195,7 @@ class AbilityServiceImpl implements AbilityService {
     return (state.withArmy(updated), card);
   }
 
-  /// Adds [kSoldierSpellUnits] to the friendly tile [targetTerritoryId],
+  /// Adds [kSoldierSpellUnits] to the friendly city [targetTerritoryId],
   /// respecting base capacity (Requirement 5.4).
   List<Territory> _applySoldierSpell(
     List<Territory> territories,
@@ -227,19 +229,19 @@ void checkTarget(
     throw InvalidTargetException(
       targetTerritoryId: target.id,
       reason: ability.targetsOwnTile
-          ? 'Pick one of your own tiles.'
+          ? 'Pick one of your own cities.'
           : ability == AbilityType.tribute
-          ? 'Pick a tile of another player.'
-          : 'Pick a tile that is not yours'
+          ? 'Pick a city of another player.'
+          : 'Pick a city that is not yours'
                 '${ability.hitsAnywhere ? '' : ' and borders your land'}.',
     );
   }
 }
 
 /// Whether [ability] of [armyId] may be played on [target]: Asker Büyüsü on
-/// an own tile, Haraç Kes on another army's tile, Atom / Nuclear bombs on any
-/// tile that is not the army's own, other bombs on such a tile next to the
-/// army's land.
+/// an own city, Haraç Kes on another army's city, Atom / Nuclear bombs on
+/// any city that is not the army's own, other bombs on such a city next to
+/// the army's land.
 bool isValidTarget(
   GameState state,
   ArmyId armyId,
@@ -255,21 +257,22 @@ bool isValidTarget(
   );
 }
 
-// ─── Tile capture ("minik kare") ─────────────────────────────────────────────
+// ─── Bombs ───────────────────────────────────────────────────────────────────
 
-/// How many tiles each offensive ability captures.
-const Map<AbilityType, int> kAbilityCaptureTiles = {
-  AbilityType.fireBomb: kFireBombTiles, // 2
-  AbilityType.bombardment: kBombardmentTiles, // 8
-  AbilityType.megaBomba: kMegaBombaTiles, // 25
-  AbilityType.atomBomb: kAtomBombTiles, // 25
-  AbilityType.nuclearBomb: kNuclearBombTiles, // 40
+/// What each bomb card does: (cities hit, soldiers killed in each).
+const Map<AbilityType, (int, int)> kBombEffects = {
+  AbilityType.fireBomb: (1, kFireBombDamage), // 30
+  AbilityType.bombardment: (2, kBombardmentDamage), // 40
+  AbilityType.megaBomba: (3, kMegaBombaDamage), // 60
+  AbilityType.atomBomb: (4, kAtomBombDamage), // 80
+  AbilityType.nuclearBomb: (6, kNuclearBombDamage), // 100
 };
 
-/// Returns the ids of the (up to) [count] tiles an ability aimed at
-/// [targetId] captures for [armyId]: the target itself, then the nearest
-/// tiles not owned by [armyId] (breadth-first through such tiles).
-List<int> captureArea(
+/// Returns the ids of the (up to) [count] cities a bomb aimed at
+/// [targetId] hits for [armyId]: the target itself, then the nearest cities
+/// not owned by [armyId] (breadth-first through such cities, enemy cities
+/// with the most soldiers first).
+List<int> bombArea(
   List<Territory> territories,
   ArmyId armyId,
   int targetId,
@@ -292,7 +295,7 @@ List<int> captureArea(
         next.add(adj);
       }
     }
-    // Prefer enemy tiles (more units first) over empty neutral land.
+    // Prefer enemy cities (more soldiers first) over neutral ones.
     next.sort((a, b) {
       final ta = _byId(territories, a)!;
       final tb = _byId(territories, b)!;
@@ -311,24 +314,34 @@ List<int> captureArea(
   return result;
 }
 
-/// Returns [territories] with the [captureArea] tiles taken over by
-/// [armyId]; each captured tile keeps [kCapturedTileUnits] unit(s) and any
-/// units previously stationed there are destroyed.
-List<Territory> captureTiles(
+/// Returns [territories] with [damage] soldiers killed in every
+/// [bombArea] city. Each city keeps at least [kBombedCityMinUnits] soldier
+/// and its owner.
+List<Territory> bombCities(
   List<Territory> territories,
   ArmyId armyId,
   int targetId,
   int count,
+  int damage,
 ) {
-  final area = captureArea(territories, armyId, targetId, count).toSet();
+  final area = bombArea(territories, armyId, targetId, count).toSet();
   return [
     for (final t in territories)
       if (area.contains(t.id))
-        t.copyWith(ownerArmyId: armyId, unitCount: kCapturedTileUnits)
+        t.copyWith(
+          unitCount: max(
+            min(kBombedCityMinUnits, t.unitCount),
+            t.unitCount - damage,
+          ),
+        )
       else
         t,
   ];
 }
+
+/// Soldiers a bomb would kill in [t] (never below [kBombedCityMinUnits]).
+int bombKills(Territory t, int damage) =>
+    max(0, min(damage, t.unitCount - kBombedCityMinUnits));
 
 Territory? _byId(List<Territory> territories, int id) {
   if (id >= 0 && id < territories.length && territories[id].id == id) {

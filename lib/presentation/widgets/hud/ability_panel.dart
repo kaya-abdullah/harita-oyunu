@@ -3,7 +3,7 @@
 /// A panel that folds open and shut: its header shows how many cards the
 /// player holds, the free "Kart Çek" button and the open / close arrow; the
 /// body lists every card with how many of it are in hand. Tap a card, then a
-/// tile on the map, to play it.
+/// city on the map, to play it.
 library;
 
 import 'package:flutter/material.dart';

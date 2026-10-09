@@ -30,13 +30,13 @@ const _turn = TurnServiceImpl(
   victoryService: VictoryServiceImpl(),
 );
 
-int _tiles(GameState s, ArmyId a) =>
+int _cities(GameState s, ArmyId a) =>
     s.territories.where((t) => t.ownerArmyId == a).length;
 
 /// Plays [turns] full rounds against a passive human; returns the final state.
 Future<GameState> _simulate(AiDifficulty d, int turns, {int seed = 7}) async {
   final agent = _agent(seed);
-  var s = createInitialGameState(difficulty: d);
+  var s = createInitialGameState(difficulty: d, random: Random(seed));
   for (var i = 0; i < turns && s.phase == GamePhase.playing; i++) {
     s = _turn.endTurn(s); // human passes
     s = await agent.playTurn(s);
@@ -63,7 +63,7 @@ void main() {
     },
   );
 
-  test('hard bot draws its free card, then plays a card at a valid tile', () {
+  test('hard bot draws its free card, then plays a card at a valid city', () {
     final agent = _agent(1);
     var s = _turn.endTurn(
       createInitialGameState(difficulty: AiDifficulty.hard),
@@ -100,12 +100,15 @@ void main() {
     final atom = agent.nextAction(s)! as UseAbilityAction;
     expect(atom.ability, AbilityType.atomBomb);
     expect(s.territories[atom.targetTerritoryId].ownerArmyId, ArmyId.army1);
+    int playerSoldiers(GameState g) => g.territories
+        .where((t) => t.ownerArmyId == ArmyId.army1)
+        .fold(0, (n, t) => n + t.unitCount);
+    final before = playerSoldiers(s);
     s = agent.applyAction(atom, s);
     expect(s.army2.cardCount(AbilityType.atomBomb), 0);
-    expect(
-      s.tilesOwnedBy(ArmyId.army2),
-      greaterThanOrEqualTo(kStartTileCount + kAtomBombTiles),
-    );
+    // It hit the player's cities hard (bombs kill, they do not take land).
+    expect(playerSoldiers(s), lessThan(before - 150));
+    expect(s.tilesOwnedBy(ArmyId.army1), 4);
 
     // Haraç Kes on the player, who has 400 diamonds.
     s = start
@@ -154,7 +157,7 @@ void main() {
       final s = _turn.endTurn(createInitialGameState(difficulty: d));
       final before = s.army2.totalUnitPool;
       final after = _turn.endTurn(s).army2.totalUnitPool;
-      final base = kSoldiersPerTurn + kStartTileCount ~/ kTilesPerBonusSoldier;
+      final base = kSoldiersPerTurn + 4 * kSoldiersPerCity;
       expect(
         after - before,
         base + (d == AiDifficulty.hard ? kHardAiBonusSoldiers : 0),
@@ -167,13 +170,13 @@ void main() {
     final easy = await _simulate(AiDifficulty.veryEasy, 6);
     final medium = await _simulate(AiDifficulty.medium, 6);
     final hard = await _simulate(AiDifficulty.hard, 6);
-    final e = _tiles(easy, ArmyId.army2);
-    final m = _tiles(medium, ArmyId.army2);
+    final e = _cities(easy, ArmyId.army2);
+    final m = _cities(medium, ArmyId.army2);
     final h = hard.winnerId == ArmyId.army2
         ? kTerritoryCount
-        : _tiles(hard, ArmyId.army2);
+        : _cities(hard, ArmyId.army2);
     // ignore: avoid_print
-    print('bot tiles after 6 turns — very easy: $e, medium: $m, hard: $h');
+    print('bot cities after 6 turns — very easy: $e, medium: $m, hard: $h');
     expect(e, lessThan(m));
     expect(m, lessThanOrEqualTo(h));
   });

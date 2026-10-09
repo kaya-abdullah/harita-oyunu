@@ -159,19 +159,14 @@ class CombatServiceImpl implements CombatService {
       // Defender loses ceil(attackingUnits × kDefenderHoldLossFraction).
       final defenderLosses = (attackingUnits * kDefenderHoldLossFraction)
           .ceil();
-      final survivingDefenders = max(0, defendingUnits - defenderLosses);
+      final survivingDefenders = defendingUnits - defenderLosses;
 
       // Attacker loses all attacking units; source keeps the 1 held back.
       updatedSource = source.copyWith(unitCount: 1);
 
-      // Apply zero-unit ownership rule: if defender is wiped to 0,
-      // territory becomes neutral.
-      final defenderOwner = survivingDefenders > 0 ? target.ownerArmyId : null;
-
-      updatedTarget = target.copyWith(
-        unitCount: survivingDefenders,
-        ownerArmyId: defenderOwner,
-      );
+      // A city that holds always keeps at least one soldier and its owner:
+      // there is no empty land ("boş toprak alamasın").
+      updatedTarget = target.copyWith(unitCount: max(1, survivingDefenders));
     }
 
     // Conquering a diamond or gold mine pays out.

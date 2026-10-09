@@ -161,16 +161,17 @@ void main() {
         .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
         .game!;
     final origin = tester.getTopLeft(find.byType(GameWidget<WarGame>));
-    Future<void> tapTile(int id) async {
+    Future<void> tapCity(int id) async {
       final p = game.mapComponent.graph.positionOf(id).offset;
       final s = game.camera.localToGlobal(Vector2(p.dx, p.dy));
       await tester.tapAt(origin + Offset(s.x, s.y));
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    // Zoom in so the tiny tiles are easy to hit.
-    game.zoomTo(3);
-    final start = state.territories[game.mapComponent.graph.playerStartId];
+    // The map opens zoomed in on Morocco; centre the first city.
+    expect(game.userZoom, WarGame.startZoom);
+    final start =
+        state.territories[game.mapComponent.graph.playerStartCities.first];
     final startPos = game.mapComponent.graph.positionOf(start.id).offset;
     game.panBy(
       (game.camera.localToGlobal(Vector2(startPos.dx, startPos.dy)) -
@@ -179,23 +180,56 @@ void main() {
     );
     await tester.pump();
 
-    // ── 4. Attack: select an own border tile, tap a free neighbour ────────
+    // Every city of Morocco is ours with 60 soldiers; every other city
+    // holds 50–70 soldiers (no empty land).
+    for (final t in state.territories) {
+      if (t.ownerArmyId == ArmyId.army1) {
+        expect(t.unitCount, kStartUnitsPerCity);
+      } else if (t.ownerArmyId == null) {
+        expect(
+          t.unitCount,
+          inInclusiveRange(kNeutralCityMinUnits, kNeutralCityMaxUnits),
+        );
+      }
+    }
+
+    // ── 4. Attack: select an own border city, add the reserve, then tap a
+    //       neutral neighbour ─────────────────────────────────────────────
     final (src, dst) = _border(state);
-    await tapTile(src);
+    await tapCity(src);
     expect(container.read(selectedTerritoryProvider), src);
-    await tapTile(dst);
+    // The info panel names the city and its country.
+    expect(find.textContaining(' · Fas'), findsOneWidget);
+    await tapCity(src); // deploys the 20 reserve soldiers
+    state = container.read(gameProvider);
+    expect(state.territories[src].unitCount, kStartUnitsPerCity + 20);
+    final defenders = state.territories[dst].unitCount;
+    await tapCity(dst);
     state = container.read(gameProvider);
     expect(state.territories[dst].ownerArmyId, ArmyId.army1);
+    // Soldier for soldier: the winners keep the difference.
+    expect(
+      state.territories[dst].unitCount,
+      kStartUnitsPerCity + 20 - 1 - defenders,
+    );
 
-    // ── 5. Fire Bomb card: 2 tiny tiles at once ───────────────────────────
+    // ── 5. Fire Bomb card: kills 30 soldiers in a neighbouring city ───────
     final before = state.tilesOwnedBy(ArmyId.army1);
     await tester.tap(find.byKey(const Key('ability_fireBomb')));
     await tester.pump();
     expect(container.read(armedAbilityProvider), AbilityType.fireBomb);
     final (_, target) = _border(container.read(gameProvider));
-    await tapTile(target);
+    final targetUnits = container
+        .read(gameProvider)
+        .territories[target]
+        .unitCount;
+    await tapCity(target);
     state = container.read(gameProvider);
-    expect(state.tilesOwnedBy(ArmyId.army1), before + kFireBombTiles);
+    expect(state.tilesOwnedBy(ArmyId.army1), before);
+    expect(
+      state.territories[target].unitCount,
+      max(kBombedCityMinUnits, targetUnits - kFireBombDamage),
+    );
     expect(
       container.read(gameFeedbackProvider)?.kind,
       GameFeedbackKind.abilityUsed,
@@ -230,9 +264,7 @@ void main() {
     expect(state.army1.hasDrawnCard, isFalse, reason: 'a new free card');
     // The bots played (and fought each other): some of them grew.
     expect(
-      state.armies
-          .skip(1)
-          .any((b) => state.tilesOwnedBy(b.id) > kStartTileCount),
+      state.armies.skip(1).any((b) => state.tilesOwnedBy(b.id) > 4),
       isTrue,
     );
     expect(repo.saved?.currentTurn, 2);
@@ -251,8 +283,8 @@ void main() {
   });
 }
 
-/// An own tile with ≥ 2 units and a neighbour that is neither own nor
-/// another army's (free land), or any non-own neighbour as a fallback.
+/// An own city with ≥ 2 units and a neighbour that is neither own nor
+/// another army's (neutral), or any non-own neighbour as a fallback.
 (int, int) _border(GameState s) {
   (int, int)? fallback;
   for (final t in s.territories) {

@@ -60,7 +60,7 @@ void main() {
     expect(kTerritoryGraphJson.trim(), asset.trim());
   });
 
-  test('initial state uses the Africa tile map graph', () {
+  test('initial state uses the Africa city map graph', () {
     final s = createInitialGameState();
     final graph = TerritoryGraph.bundled();
     expect(s.territories, hasLength(kTerritoryCount));
@@ -83,28 +83,25 @@ void main() {
     expect(s.difficulty, AiDifficulty.medium);
   });
 
-  test('armies start at opposite ends of Africa with equal forces', () {
+  test('the player is Morocco, bot 1 Mauritania close by, equal forces', () {
     final s = createInitialGameState(difficulty: AiDifficulty.hard);
     final graph = TerritoryGraph.bundled();
     expect(s.difficulty, AiDifficulty.hard);
     final blue = s.territories.where((t) => t.ownerArmyId == ArmyId.army1);
     final red = s.territories.where((t) => t.ownerArmyId == ArmyId.army2);
-    expect(blue, hasLength(kStartTileCount));
-    expect(red, hasLength(kStartTileCount));
-    expect(blue.every((t) => t.unitCount == kStartUnitsPerTile), isTrue);
-    expect(red.every((t) => t.unitCount == kStartUnitsPerTile), isTrue);
-    // Each starts on its own base.
-    expect(s.territories[graph.playerStartId].ownerArmyId, ArmyId.army1);
-    expect(s.territories[graph.botStartId].ownerArmyId, ArmyId.army2);
     expect(
-      s.territories[graph.playerStartId].type,
-      isNot(TerritoryType.normal),
+      blue.map((t) => t.id).toSet(),
+      graph.citiesOf('region_morocco').toSet(),
     );
-    // Player in the far north, bot in the far south.
-    final blueRows = blue.map((t) => graph.positionOf(t.id).row);
-    final redRows = red.map((t) => graph.positionOf(t.id).row);
-    expect(blueRows.reduce(max), lessThan(graph.rows ~/ 3));
-    expect(redRows.reduce(min), greaterThan(graph.rows * 2 ~/ 3));
+    expect(
+      red.map((t) => t.id).toSet(),
+      graph.citiesOf('region_mauritania').toSet(),
+    );
+    expect(blue.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
+    expect(red.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
+    // Close, but not touching: Western Sahara lies between them.
+    final dist = graph.distancesFrom(blue.map((t) => t.id));
+    expect(red.map((t) => dist[t.id]).reduce(min), 2);
   });
 
   testWidgets('player attacks via map taps, deploys, and AI plays its turn', (
@@ -114,20 +111,29 @@ void main() {
     final c = _container(repo);
     final n = c.read(gameProvider.notifier);
 
-    // Select an own border tile then tap a neutral neighbour → conquer.
+    // Select an own border city; tapping it again deploys the reserve.
     final (src, dst) = _ownBorder(c.read(gameProvider), ArmyId.army1);
     n.onTerritoryTapped(src);
     expect(c.read(selectedTerritoryProvider), src);
+    final pool = c.read(gameProvider).army1.totalUnitPool;
+    n.onTerritoryTapped(src);
+    expect(c.read(gameProvider).army1.totalUnitPool, 0);
+    expect(
+      c.read(gameProvider).territories[src].unitCount,
+      kStartUnitsPerCity + pool,
+    );
+
+    // Tap a neutral neighbour (50–70 soldiers) → conquer it; the winners
+    // keep the difference.
+    final defenders = c.read(gameProvider).territories[dst].unitCount;
     n.onTerritoryTapped(dst);
     expect(c.read(gameProvider).territories[dst].ownerArmyId, ArmyId.army1);
+    expect(
+      c.read(gameProvider).territories[dst].unitCount,
+      kStartUnitsPerCity + pool - 1 - defenders,
+    );
+    expect(c.read(gameProvider).territories[src].unitCount, 1);
     expect(c.read(selectedTerritoryProvider), dst);
-
-    // Tapping the selected territory again deploys the unit pool.
-    final pool = c.read(gameProvider).army1.totalUnitPool;
-    final before = c.read(gameProvider).territories[dst].unitCount;
-    n.onTerritoryTapped(dst);
-    expect(c.read(gameProvider).army1.totalUnitPool, 0);
-    expect(c.read(gameProvider).territories[dst].unitCount, before + pool);
 
     final diamondsBefore = c.read(gameProvider).army1.diamondBalance;
     final aiOwnedBefore = c
@@ -157,11 +163,8 @@ void main() {
     final owned = s.territories
         .where((t) => t.ownerArmyId == ArmyId.army1)
         .length;
-    // Income is based on the tiles owned when the turn ended.
-    expect(
-      s.army1.totalUnitPool,
-      kSoldiersPerTurn + (kStartTileCount + 1) ~/ kTilesPerBonusSoldier,
-    );
+    // Income is based on the cities owned when the turn ended (4 + 1).
+    expect(s.army1.totalUnitPool, kSoldiersPerTurn + 5 * kSoldiersPerCity);
     expect(owned, greaterThanOrEqualTo(1));
     expect(
       s.territories.where((t) => t.ownerArmyId == ArmyId.army2).length,
@@ -181,7 +184,7 @@ void main() {
 
     n.armAbility(AbilityType.fireBomb);
     expect(c.read(armedAbilityProvider), AbilityType.fireBomb);
-    // A tile far away in enemy land is not a valid target: stays armed.
+    // A city far away in enemy land is not a valid target: stays armed.
     final enemyTile = c
         .read(gameProvider)
         .territories
@@ -197,16 +200,18 @@ void main() {
       ArmyId.army2,
     );
 
-    // Fire Bomb on a bordering tile captures that tile and one more, and
-    // one Fire Bomb card is used up.
+    // Fire Bomb on a bordering city kills 30 of its soldiers (the city is
+    // not taken), and one Fire Bomb card is used up.
     final ownedBefore = _count(c.read(gameProvider), ArmyId.army1);
     final (_, target) = _ownBorder(c.read(gameProvider), ArmyId.army1);
+    final unitsBefore = c.read(gameProvider).territories[target].unitCount;
     n.onTerritoryTapped(target);
-    expect(c.read(gameProvider).territories[target].ownerArmyId, ArmyId.army1);
+    expect(c.read(gameProvider).territories[target].ownerArmyId, isNull);
     expect(
-      _count(c.read(gameProvider), ArmyId.army1),
-      ownedBefore + kFireBombTiles,
+      c.read(gameProvider).territories[target].unitCount,
+      unitsBefore - kFireBombDamage,
     );
+    expect(_count(c.read(gameProvider), ArmyId.army1), ownedBefore);
     expect(c.read(gameFeedbackProvider)!.kind, GameFeedbackKind.abilityUsed);
     expect(c.read(armedAbilityProvider), isNull);
     expect(
@@ -216,9 +221,11 @@ void main() {
 
     // The second Fire Bomb can be played the same turn too.
     n.armAbility(AbilityType.fireBomb);
-    final (_, second) = _ownBorder(c.read(gameProvider), ArmyId.army1);
-    n.onTerritoryTapped(second);
-    expect(c.read(gameProvider).territories[second].ownerArmyId, ArmyId.army1);
+    n.onTerritoryTapped(target);
+    expect(
+      c.read(gameProvider).territories[target].unitCount,
+      max(1, unitsBefore - 2 * kFireBombDamage),
+    );
     expect(c.read(gameProvider).army1.cardCount(AbilityType.fireBomb), 0);
 
     // Out of Fire Bombs: buying one in the shop adds it to the hand.
@@ -273,8 +280,11 @@ void main() {
     n.armAbility(AbilityType.atomBomb);
     n.onTerritoryTapped(far.id);
     s = c.read(gameProvider);
-    expect(s.territories[far.id].ownerArmyId, ArmyId.army1);
-    expect(_count(s, ArmyId.army1), ownedBefore + kAtomBombTiles);
+    // 80 soldiers die in each of 4 cities; the bot keeps its land.
+    expect(s.territories[far.id].ownerArmyId, ArmyId.army2);
+    expect(s.territories[far.id].unitCount, kBombedCityMinUnits);
+    expect(_count(s, ArmyId.army1), ownedBefore);
+    expect(s.tilesOwnedBy(ArmyId.army2), 4);
 
     final mine = s.army1.diamondBalance;
     final botTile = s.territories.firstWhere(
@@ -319,11 +329,11 @@ void main() {
     final s = createInitialGameState();
     const last = 100;
     final source = s.territories[last].adjacentIds.first;
-    // Army 1 owns everything except one tile (neutral, 0 units).
+    // Army 1 owns everything except one city (neutral, 1 soldier).
     final territories = [
       for (final t in s.territories)
         t.id == last
-            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            ? t.copyWith(ownerArmyId: null, unitCount: 1)
             : t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 5),
     ];
     // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
@@ -362,9 +372,9 @@ void main() {
     final territories = [
       for (final t in s.territories)
         t.id == source
-            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 10)
+            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 80)
             : t.id == mine.id
-            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            ? t.copyWith(ownerArmyId: null, unitCount: 50)
             : t,
     ];
     // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
@@ -399,9 +409,9 @@ void main() {
     final territories = [
       for (final t in s.territories)
         t.id == source
-            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 10)
+            ? t.copyWith(ownerArmyId: ArmyId.army1, unitCount: 80)
             : t.id == base.id
-            ? t.copyWith(ownerArmyId: null, unitCount: 0)
+            ? t.copyWith(ownerArmyId: null, unitCount: 50)
             : t,
     ];
     // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
@@ -525,14 +535,12 @@ void main() {
     final s = c.read(gameProvider);
     expect(s.activeArmyId, ArmyId.army1);
     expect(s.currentTurn, 2);
+    var expanded = 0;
     for (final bot in s.armies.skip(1)) {
-      expect(
-        s.tilesOwnedBy(bot.id),
-        greaterThan(kStartTileCount),
-        reason: '${bot.id} should have expanded',
-      );
+      if (s.tilesOwnedBy(bot.id) > 4) expanded++;
       expect(bot.diamondBalance, greaterThanOrEqualTo(kStartDiamonds + 80));
     }
+    expect(expanded, greaterThanOrEqualTo(kMaxBots ~/ 2));
     expect(repo.saved?.armies, hasLength(kMaxBots + 1));
   });
 
@@ -571,7 +579,7 @@ void main() {
   );
 }
 
-/// An own tile of [army] with ≥ 2 units and one of its non-own neighbours.
+/// An own city of [army] with ≥ 2 units and one of its non-own neighbours.
 (int, int) _ownBorder(GameState s, ArmyId army) {
   for (final t in s.territories) {
     if (t.ownerArmyId != army || t.unitCount < 2) continue;
@@ -579,7 +587,7 @@ void main() {
       if (s.territories[adj].ownerArmyId != army) return (t.id, adj);
     }
   }
-  throw StateError('no border tile');
+  throw StateError('no border city');
 }
 
 int _count(GameState s, ArmyId army) =>

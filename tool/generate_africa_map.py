@@ -59,6 +59,15 @@ MIN_SHARED_BORDER_DEG = 0.15  # shorter contacts do not make neighbours
 LINE_SIMPLIFY_DEG = 0.01
 MOROCCO_SOUTH_LAT = 27.667  # Morocco / Western Sahara border
 
+# Cities are separate patches of land ("adacık") with empty land between
+# them that nobody can attack ("boş alan, saldırı yapılmaz"): a city's area
+# is its share of the country, shrunk by BLOB_GAP, cut to at most
+# BLOB_RADIUS around the city and rounded off by BLOB_ROUND (degrees).
+BLOB_GAP = 0.3
+BLOB_RADIUS = 2.3
+BLOB_ROUND = 0.25
+MIN_BLOB_DEG2 = 0.06
+
 # Country → cities: (lon, lat, Turkish name, English name, kind). The first
 # city of a country is its capital (or best-known city). kind "gold" marks a
 # gold mine (a big capital that pays out when captured).
@@ -440,17 +449,14 @@ def main():
             adjacency[b].add(a)
             shared_of[a].append(shared)
             shared_of[b].append(shared)
-            for line in parts_of(shared):
-                borders.append([a, b, flat(line.coords)])
 
-    # The coast of every area: its outline minus all shared borders.
+    # Cities that shared a border stay neighbours (they can attack each
+    # other over the empty land); what is drawn is a patch around each city.
+    cells = areas
+    areas = [blob_of(cells[i], cities[i][0], cities[i][1]) for i in range(n)]
     for i in range(n):
-        coast = areas[i].boundary
-        if shared_of[i]:
-            coast = coast.difference(unary_union(shared_of[i]).buffer(1e-5))
-        for line in parts_of(lines_of(coast)):
-            if line.length > 0.05:
-                borders.append([i, -1, flat(line.coords)])
+        for p in polygons(areas[i]):
+            borders.append([i, -1, flat(list(p.exterior.coords))])
 
     # Sea route: every separate component (Madagascar) joins the mainland
     # at its closest pair of cities.
@@ -472,7 +478,7 @@ def main():
     # ── Mines ─────────────────────────────────────────────────────────────
     def area_at(lon, lat):
         p = Point(lon, lat)
-        return min(range(n), key=lambda i: areas[i].distance(p))
+        return min(range(n), key=lambda i: cells[i].distance(p))
 
     mines = {area_at(lon, lat) for lon, lat in MINES}
 
@@ -496,6 +502,24 @@ def main():
     country_of = [c[5] for c in cities]
     for x, gx in enumerate(starts):
         assert connected_within(adjacency, gx), start_countries[x]
+
+    # ── Every other city belongs to a bot ("şehirleri yapay zeka kontrol
+    #    ediyor"): each bot spreads from its start country to the cities it
+    #    reaches first, so every bot holds one connected stretch of land.
+    regions = [-1] * n
+    frontier = deque()
+    for army, group in enumerate(starts):
+        for i in group:
+            regions[i] = army
+            if army > 0:
+                frontier.append(i)
+    while frontier:
+        cur = frontier.popleft()
+        for nb in sorted(adjacency[cur]):
+            if regions[nb] < 0:
+                regions[nb] = regions[cur]
+                frontier.append(nb)
+    assert all(r >= 0 for r in regions)
 
     # ── Satellite picture (only re-cut when a Blue Marble path is given) ──
     if len(sys.argv) > 1:
@@ -559,6 +583,7 @@ def main():
             t["diamondMine"] = True
         t["outline"] = [flat(list(p.exterior.coords)[:-1])
                         for p in polygons(areas[i])]
+        assert len(t["outline"]) == 1, en
         territories.append(t)
 
     outlines = {
@@ -572,6 +597,7 @@ def main():
     lines.append(f'  "tileSize": {TILE},')
     lines.append(f'  "satelliteMargin": {SAT_MARGIN},')
     lines.append(f'  "startCities": {json.dumps(starts)},')
+    lines.append(f'  "regions": {json.dumps(regions, separators=(",", ":"))},')
     lines.append(f'  "seaLinks": {json.dumps(sea_links)},')
     lines.append('  "outlines": {')
     for i, (key, rs) in enumerate(outlines.items()):
@@ -642,6 +668,12 @@ def country_shapes(country_rings):
     shapes["morocco"] = keep_pieces(shapes["morocco"].difference(south))
     shapes["western_sahara"] = keep_pieces(
         unary_union([shapes["western_sahara"], cut]).buffer(1e-9))
+    # Enclaves (Lesotho inside South Africa) are holes of their neighbour.
+    # Where two overlap, the smaller country keeps the land.
+    sizes = {k: v.area for k, v in shapes.items()}
+    for key in sorted(shapes, key=sizes.get, reverse=True):
+        smaller = [v for k, v in shapes.items() if sizes[k] < sizes[key]]
+        shapes[key] = keep_pieces(shapes[key].difference(unary_union(smaller)))
     # America: a round country cut out of the middle.
     circle = Point(*AMERICA_CENTRE).buffer(AMERICA_RADIUS, 64)
     for key in list(shapes):
@@ -663,6 +695,45 @@ def write_city_names(cities):
         with open(path, "w") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.write("\n")
+
+
+def blob_of(cell, lon, lat):
+    """The patch of land drawn for a city: its [cell] shrunk, cut to a disc
+    around the city and rounded off — a single piece."""
+    centre = Point(lon, lat)
+    radius = BLOB_RADIUS
+    while True:
+        blob = cell.buffer(-BLOB_GAP).intersection(
+            wobbly_disc(lon, lat, radius))
+        blob = blob.buffer(-BLOB_ROUND).buffer(BLOB_ROUND * 2).buffer(
+            -BLOB_ROUND)
+        pieces = [g for g in polygons(blob.intersection(cell))
+                  if g.area >= MIN_BLOB_DEG2]
+        # A patch may not wrap round another country (Durban round
+        # Lesotho): it is drawn without holes, so make it smaller.
+        if radius <= 0.5 or not any(g.interiors for g in pieces):
+            break
+        radius -= 0.2
+    if not pieces:
+        # A small city: a little round patch around it, inside its cell.
+        pieces = polygons(cell.intersection(centre.buffer(0.35, 24)))
+        pieces = pieces or polygons(cell)
+    best = max(pieces, key=lambda g: (g.area if g.distance(centre) < 0.5
+                                      else g.area / 100))
+    return Polygon(best.exterior).simplify(0.02)
+
+
+def wobbly_disc(lon, lat, radius):
+    """A hand-drawn looking round patch ("adacık"): a circle whose edge
+    waves in and out, differently for every city."""
+    phase = (lon * 12.9898 + lat * 78.233) % (2 * math.pi)
+    points = []
+    for k in range(48):
+        a = 2 * math.pi * k / 48
+        r = radius * (1 + 0.14 * math.sin(3 * a + phase)
+                      + 0.08 * math.sin(5 * a + 2.1 * phase))
+        points.append((lon + r * math.cos(a), lat + r * math.sin(a)))
+    return Polygon(points)
 
 
 def keep_pieces(geom):

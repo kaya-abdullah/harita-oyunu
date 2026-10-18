@@ -102,6 +102,7 @@ class TerritoryGraph {
     required this.rows,
     required this.tileSize,
     required this.startCities,
+    required this.regions,
     required this.outlines,
     required this.cityOutlines,
     required this.countries,
@@ -126,6 +127,12 @@ class TerritoryGraph {
   /// Start countries (their cities) in army order: the human player first
   /// (America, in the middle of Africa), then bot 1 … bot 6 all around it.
   final List<List<int>> startCities;
+
+  /// The army (index in turn order: 0 is the player) every city belongs to
+  /// at game start, indexed by city id. America is the player's; every
+  /// other city belongs to the bot whose start country is nearest ("bot
+  /// şehirler").
+  final List<int> regions;
 
   /// Real country outlines (Natural Earth) in map world units, keyed by
   /// region name key (e.g. `region_morocco`). Each outline is a closed ring.
@@ -281,6 +288,13 @@ class TerritoryGraph {
       }
     }
 
+    final regions = [
+      for (final r in decoded['regions'] as List<dynamic>? ?? []) r as int,
+    ];
+    if (regions.isNotEmpty && regions.length != territories.length) {
+      throw const TerritoryGraphException('One region per city.');
+    }
+
     final outlines = <String, List<List<Offset>>>{};
     final rawOutlines = decoded['outlines'] as Map<String, dynamic>? ?? {};
     rawOutlines.forEach((key, rings) {
@@ -306,6 +320,7 @@ class TerritoryGraph {
       rows: decoded['rows'] as int? ?? 1,
       tileSize: (decoded['tileSize'] as num? ?? 24).toDouble(),
       startCities: List.unmodifiable(startCities),
+      regions: List.unmodifiable(regions),
       outlines: Map.unmodifiable(outlines),
       cityOutlines: List.unmodifiable(cityOutlines),
       countries: List.unmodifiable(countries),

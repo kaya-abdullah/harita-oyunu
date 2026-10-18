@@ -110,3 +110,50 @@ yakınlaştırmalar ekran noktasından haritadaki noktaya tam olarak
 - Yeni: ekran ↔ harita noktası dönüşümü birebir geri dönüyor.
 - Parmakla kaydırma, iki parmakla yakınlaştırma, dokunarak seçme ve uçtan uca
   oyun testleri yeni hesapla geçiyor. Toplam 110 test geçiyor.
+
+---
+
+# v1.9.0: Şehirler ayrı adacıklar, bütün şehirler botların
+
+Kaynak: `istekler/WhatsApp Image 2026-10-18 at 20.36.54.jpeg` ve
+`... 20.37.22.jpeg` (Mustafa'nın notu ve çizimi).
+
+## Not (okunduğu gibi)
+> Oyun böyle olacak, sadece yine aynı kalacak, bir de kartlar aynı kalacak.
+> 3D olacak. Amerika (biz). Şehirlerimiz (bizim) — şehirlere ad koy
+> (rastgele). Botlar: yani şehirleri yapay zekâ kontrol ediyor, şehirlere ad
+> koy rastgele. Boş alan: yani saldırı yapılmaz. Asker sayısı. Bir de başka
+> bir şehri aldığımızda o şehir bizim oluyor.
+
+Babasıyla netleştirildi: Amerika dışındaki bütün şehirler botların; Amerika
+ortada kalıyor; şehir isimleri aynı kalıyor.
+
+## Yapılanlar
+1. "Şehirler ayrı ayrı, arada boş alan; boş alana saldırı yapılmaz." →
+   Her şehir artık kendi adacığı: ülkedeki payından küçültülmüş, elle
+   çizilmiş gibi dalgalı kenarlı, yükseltilmiş bir toprak parçası.
+   Aradaki toprak boş ve biraz koyu; oraya dokununca hiçbir şey olmuyor.
+   Eskiden komşu olan şehirler birbirine boş toprağın üstünden saldırabiliyor.
+2. "Botlar: şehirleri yapay zekâ kontrol ediyor." → Boş şehir kalmadı:
+   Amerika dışındaki her şehir 6 bottan birinin. Her bot kendi başlangıç
+   ülkesinden yayılan tek parça bir bölgeye sahip (başlangıç ülkesinde 60,
+   diğer şehirlerde 50–70 asker).
+3. "Başka bir şehri aldığımızda o şehir bizim oluyor." → Aynen böyle
+   (değişmedi).
+4. "3D olacak." → Harita artık üst kenarından eğik duruyor: gökyüzü bandı
+   yok, harita bütün ekranı dolduruyor; yakın taraf daha büyük görünüyor.
+5. Kartlar ve geri kalan her şey aynı.
+
+Ayrıca: Lesotho, Güney Afrika'nın içinde olduğu için Durban'ın adacığı onu
+örtüyordu; artık ülkeler üst üste binmiyor.
+
+## Denge
+Simülasyon (8 oyun, 40 tur, 6 Orta bot): hiçbir şey yapmayan Amerika en az
+8 tur dayanıyor; akıllı oynayan Amerika 8 oyunun hepsinde ayakta kalıyor
+(botlar birbirleriyle de savaşıyor). Kuralda değişiklik gerekmedi.
+
+## Test
+- `flutter analyze` temiz, 112 testin hepsi geçiyor.
+- Yeni: şehirler birbirine değmiyor; 6 botla her şehrin bir sahibi var ve
+  her botun bölgesi tek parça; boş toprağa dokunmak hiçbir şey yapmıyor;
+  yeni başlangıç dağılımı; görüntü karşılaştırma (adacıklar, eğik harita).

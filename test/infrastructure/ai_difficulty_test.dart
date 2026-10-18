@@ -157,7 +157,8 @@ void main() {
       final s = _turn.endTurn(createInitialGameState(difficulty: d));
       final before = s.army2.totalUnitPool;
       final after = _turn.endTurn(s).army2.totalUnitPool;
-      final base = kSoldiersPerTurn + 4 * kSoldiersPerCity;
+      final cities = s.tilesOwnedBy(ArmyId.army2);
+      final base = kSoldiersPerTurn + cities * kSoldiersPerCity;
       expect(
         after - before,
         base + (d == AiDifficulty.hard ? kHardAiBonusSoldiers : 0),

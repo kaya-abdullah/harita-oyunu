@@ -13,11 +13,12 @@ library;
 /// `tool/generate_africa_map.py`.
 const int kTerritoryCount = 185;
 
-/// Fewest soldiers in a city nobody owns at game start ("50'den aşağı
-/// olmasın").
+/// Fewest soldiers at game start in a city outside the start countries — a
+/// bot's (or, with fewer bots, nobody's) — ("50'den aşağı olmasın").
 const int kNeutralCityMinUnits = 50;
 
-/// Most soldiers in a city nobody owns at game start ("70'i geçmesin").
+/// Most soldiers at game start in a city outside the start countries ("70'i
+/// geçmesin").
 const int kNeutralCityMaxUnits = 70;
 
 /// Soldiers in each city of an army's start country.

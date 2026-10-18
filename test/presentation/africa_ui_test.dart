@@ -216,6 +216,44 @@ void main() {
     }
   });
 
+  testWidgets('a tap on the empty land between cities does nothing', (
+    tester,
+  ) async {
+    final game = await _pumpGame(tester, const Size(400, 860), null);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(GameScreen)),
+    );
+    final graph = game.mapComponent.graph;
+    // Select one of America's cities; its neighbours are bot cities across
+    // the empty land.
+    final own = graph.playerStartCities.first;
+    container.read(gameProvider.notifier).onTerritoryTapped(own);
+    expect(container.read(selectedTerritoryProvider), own);
+    final before = container.read(gameProvider);
+
+    // A spot of empty land between America and a neighbour.
+    Offset? empty;
+    for (final adj in graph.getById(own).adjacentIds) {
+      final a = graph.getPosition(own);
+      final b = graph.getPosition(adj);
+      for (var f = 0.3; f <= 0.7 && empty == null; f += 0.05) {
+        final p = Offset.lerp(a, b, f)!;
+        if (game.mapComponent.cityAt(Vector2(p.dx, p.dy)) == null) empty = p;
+      }
+      if (empty != null) break;
+    }
+    expect(empty, isNotNull, reason: 'cities have empty land between them');
+
+    game.camera.viewfinder.position = Vector2(empty!.dx, empty.dy);
+    await tester.pump();
+    final screen = game.camera.localToGlobal(Vector2(empty.dx, empty.dy));
+    await tester.tapAt(_toScreen(tester, Offset(screen.x, screen.y)));
+    await tester.pump(const Duration(milliseconds: 100));
+    // Nothing attacked, nothing changed, the selection stays.
+    expect(container.read(gameProvider), same(before));
+    expect(container.read(selectedTerritoryProvider), own);
+  });
+
   testWidgets('pinch zoom is clamped and keeps the map on screen', (
     tester,
   ) async {

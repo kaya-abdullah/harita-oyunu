@@ -676,11 +676,14 @@ final isVictoryProvider = Provider<bool>(
 /// Constructs the [GameState] for a brand-new game on the Africa city map.
 ///
 /// Army 1 (human, blue) owns America, in the middle of Africa ("Amerika biz
-/// olalım"): all its four cities, [kPlayerStartUnitsPerCity] soldiers in each. The
-/// [botCount] bots (1 … [kMaxBots]) own the next start countries of the map,
-/// which all border America. Every other city is neutral and holds
+/// olalım"): all its four cities, [kPlayerStartUnitsPerCity] soldiers in
+/// each. Every other city belongs to a bot ("şehirleri yapay zeka kontrol
+/// ediyor"): each of the [botCount] bots (1 … [kMaxBots]) owns its start
+/// country next to America ([kStartUnitsPerCity] soldiers in each city) and
+/// the cities nearest to it ([TerritoryGraph.regions]), which hold
 /// [kNeutralCityMinUnits] … [kNeutralCityMaxUnits] soldiers (picked with
-/// [random]), so there is no empty land.
+/// [random]). With fewer than [kMaxBots] bots the cities of the missing
+/// bots belong to nobody.
 ///
 /// Each army begins with [kStartDiamonds] diamonds, [kStartUnitPool]
 /// reserve soldiers and [kStartCards] (two Fire Bomb cards).
@@ -695,21 +698,27 @@ GameState createInitialGameState({
   final count = 1 + botCount.clamp(1, maxBots).toInt();
   final ids = ArmyId.values.take(count).toList();
 
-  final owner = <int, ArmyId>{
+  final home = {
     for (var i = 0; i < count; i++)
-      for (final id in graph.startCities[i]) id: ids[i],
+      for (final id in graph.startCities[i]) id,
   };
+  ArmyId? ownerOf(int id) {
+    final region = graph.regions[id];
+    return region < count ? ids[region] : null;
+  }
+
+  int unitsOf(int id, ArmyId? owner) {
+    if (owner == ArmyId.army1) return kPlayerStartUnitsPerCity;
+    if (home.contains(id)) return kStartUnitsPerCity;
+    return kNeutralCityMinUnits +
+        rng.nextInt(kNeutralCityMaxUnits - kNeutralCityMinUnits + 1);
+  }
 
   final territories = [
     for (final t in graph.territories)
       t.copyWith(
-        unitCount: owner[t.id] == ArmyId.army1
-            ? kPlayerStartUnitsPerCity
-            : owner[t.id] != null
-            ? kStartUnitsPerCity
-            : kNeutralCityMinUnits +
-                  rng.nextInt(kNeutralCityMaxUnits - kNeutralCityMinUnits + 1),
-        ownerArmyId: owner[t.id],
+        unitCount: unitsOf(t.id, ownerOf(t.id)),
+        ownerArmyId: ownerOf(t.id),
       ),
   ];
 

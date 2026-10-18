@@ -101,8 +101,23 @@ void main() {
     final dist = graph.distancesFrom(blue.map((t) => t.id));
     for (final bot in s.armies.skip(1)) {
       final own = s.territories.where((t) => t.ownerArmyId == bot.id);
-      expect(own, hasLength(graph.startCities[bot.id.index].length));
-      expect(own.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
+      // Its start country and the cities nearest to it: every city of
+      // Africa belongs to a bot ("şehirleri yapay zeka kontrol ediyor").
+      expect(own.map((t) => t.id).toSet(), {
+        for (final t in s.territories)
+          if (graph.regions[t.id] == bot.id.index) t.id,
+      });
+      final home = graph.startCities[bot.id.index].toSet();
+      for (final t in own) {
+        if (home.contains(t.id)) {
+          expect(t.unitCount, kStartUnitsPerCity);
+        } else {
+          expect(
+            t.unitCount,
+            inInclusiveRange(kNeutralCityMinUnits, kNeutralCityMaxUnits),
+          );
+        }
+      }
       // Every bot starts right next to America.
       expect(
         own.map((t) => dist[t.id]).reduce(min),
@@ -291,6 +306,7 @@ void main() {
     // Deep in enemy land, far from the player.
     final far = s.territories.lastWhere((t) => t.ownerArmyId == ArmyId.army2);
     final ownedBefore = _count(c.read(gameProvider), ArmyId.army1);
+    final botBefore = _count(c.read(gameProvider), ArmyId.army2);
     n.armAbility(AbilityType.atomBomb);
     n.onTerritoryTapped(far.id);
     s = c.read(gameProvider);
@@ -298,7 +314,7 @@ void main() {
     expect(s.territories[far.id].ownerArmyId, ArmyId.army2);
     expect(s.territories[far.id].unitCount, kBombedCityMinUnits);
     expect(_count(s, ArmyId.army1), ownedBefore);
-    expect(s.tilesOwnedBy(ArmyId.army2), 4);
+    expect(s.tilesOwnedBy(ArmyId.army2), botBefore);
 
     final mine = s.army1.diamondBalance;
     final botTile = s.territories.firstWhere(
@@ -517,13 +533,12 @@ void main() {
     expect(victory.checkVictory(allBotsGone), ArmyId.army1);
 
     // The player gone: the bot with the most land wins.
-    var bigger = 0;
     final playerGone = s.copyWith(
       territories: [
         for (final t in s.territories)
           if (t.ownerArmyId == ArmyId.army1)
             t.copyWith(ownerArmyId: null, unitCount: 0)
-          else if (t.ownerArmyId == null && bigger++ < 5)
+          else if (t.ownerArmyId == null)
             t.copyWith(ownerArmyId: ArmyId.army4, unitCount: 1)
           else
             t,

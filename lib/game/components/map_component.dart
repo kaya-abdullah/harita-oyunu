@@ -30,9 +30,10 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 /// keeps the frame cheap on phones. Layers, bottom to top:
 ///   - the satellite picture (until it has loaded — and in tests that do not
 ///     wait for it — a drawn map with earthy country colours instead);
-///   - owned land raised like a plateau ("oyunu 3D yap"): a dark cliff in
-///     the army's colour under its edge, the land tinted in the army colour
-///     on top (the land still shows through);
+///   - the empty land between the cities a little darker ("boş alan");
+///   - every city a separate, raised patch of land ("oyunu 3D yap"): a dark
+///     cliff under its edge (in its army's colour), the land tinted in the
+///     army colour on top (the land still shows through);
 ///   - no country or city lines at all ("Afrika'daki çizgileri sil");
 ///   - America, the round country in the middle, in detail and raised
 ///     higher ([_drawAmerica]);
@@ -171,6 +172,7 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
       ],
   ];
 
+  static final Paint _emptyLandShade = Paint()..color = const Color(0x4D000000);
   static final Paint _satellitePaint = Paint()
     ..filterQuality = FilterQuality.medium;
   static final Paint _shorePaint = Paint()
@@ -371,6 +373,9 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
         graph.satelliteRect,
         _satellitePaint,
       );
+      // The empty land between the cities is a little darker, so the
+      // cities stand out ("boş alan").
+      canvas.drawRect(graph.satelliteRect, _emptyLandShade);
     } else {
       canvas.drawPath(_land, _shorePaint);
       _countries.forEach((key, path) {
@@ -381,11 +386,28 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     // Each army's land, raised: a cliff of [cliffSteps] darker layers under
     // it, then the land itself (picture again, clipped) and the army tint.
     final armyLand = <ArmyId, Path>{};
+    final neutralLand = Path();
     for (final t in territories) {
       final owner = t.ownerArmyId;
       // America is raised and drawn on its own (_drawAmerica).
-      if (owner == null || _inAmerica(t.id)) continue;
+      if (_inAmerica(t.id)) continue;
+      if (owner == null) {
+        neutralLand.addPath(_cityPaths[t.id], Offset.zero);
+        continue;
+      }
       (armyLand[owner] ??= Path()).addPath(_cityPaths[t.id], Offset.zero);
+    }
+    // Cities nobody owns are raised too, with a plain earth cliff.
+    for (var step = cliffSteps; step >= 1; step--) {
+      canvas.drawPath(
+        neutralLand.shift(Offset(0, cliffHeight * step / cliffSteps)),
+        Paint()
+          ..color = Color.lerp(
+            const Color(0xFF8D6E63),
+            _black,
+            0.3 + 0.35 * step / cliffSteps,
+          )!,
+      );
     }
     for (var step = cliffSteps; step >= 1; step--) {
       armyLand.forEach((owner, path) {
@@ -395,8 +417,8 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
         );
       });
     }
-    if (satellite != null && armyLand.isNotEmpty) {
-      final raised = Path();
+    if (satellite != null) {
+      final raised = Path()..addPath(neutralLand, Offset.zero);
       for (final path in armyLand.values) {
         raised.addPath(path, Offset.zero);
       }
@@ -415,8 +437,8 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
           _satellitePaint,
         )
         ..restore();
-    } else if (armyLand.isNotEmpty) {
-      armyLand.forEach((_, path) {
+    } else {
+      for (final path in [neutralLand, ...armyLand.values]) {
         canvas
           ..save()
           ..clipPath(path);
@@ -424,7 +446,7 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
           (key, c) => canvas.drawPath(c, _countryPaints[key]!),
         );
         canvas.restore();
-      });
+      }
     }
     final tints = satellite != null ? _armyTints : _armyPaints;
     armyLand.forEach(
@@ -923,25 +945,28 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
 
   // ─── Tap handling ──────────────────────────────────────────────────────────
 
-  /// Returns the city whose area holds [local] (map coordinates) — or,
-  /// for a tap just off the coast, the nearest city within reach — or
-  /// `null` for open sea.
-  int? cityAt(Vector2 local) {
+  /// Returns the city whose patch holds [local] (map coordinates), or whose
+  /// buildings or soldier label (drawn above the city, [labelHeight] map
+  /// units tall) are there — or `null` for the empty land between the
+  /// cities and the sea: nothing happens there ("boş alan, saldırı
+  /// yapılmaz").
+  int? cityAt(Vector2 local, {double labelHeight = maxLabelWorld}) {
     final p = Offset(local.x, local.y);
     for (var i = 0; i < _cityPaths.length; i++) {
       if (_cityBounds[i].contains(p) && _cityPaths[i].contains(p)) return i;
     }
-    // Taps on a city label (drawn above the dot) count for that city.
-    int? best;
-    var bestD = 12.0;
-    for (var i = 0; i < _cityPaths.length; i++) {
-      final d = (graph.getPosition(i) - p).distance;
-      if (d < bestD) {
-        bestD = d;
-        best = i;
-      }
+    final h = labelHeight;
+    for (final t in graph.territories) {
+      final c = graph.getPosition(t.id);
+      final above = Rect.fromLTRB(
+        c.dx - h * 1.6,
+        c.dy - _buildingHeight(t, h) - h * 1.6,
+        c.dx + h * 1.6,
+        c.dy,
+      );
+      if (above.contains(p)) return t.id;
     }
-    return best;
+    return null;
   }
 
   /// Handles a tap at [local] (map coordinates). Taps come from
@@ -949,7 +974,11 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
   /// pointer positions with `RenderBox.globalToLocal`, which is wrong on the
   /// tilted 3D map, while the layer's pointer positions are exact.
   void tapAt(Vector2 local) {
-    final id = cityAt(local);
+    final zoom = isMounted ? game.camera.viewfinder.zoom : 1.0;
+    final id = cityAt(
+      local,
+      labelHeight: math.min(maxLabelWorld, labelScreenPx / zoom),
+    );
     if (id == null) return;
     // Select / attack / move / deploy / fire armed ability, depending on
     // the current selection (see GameNotifier.onTerritoryTapped).

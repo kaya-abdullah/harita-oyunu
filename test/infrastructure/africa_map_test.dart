@@ -243,22 +243,36 @@ void main() {
   });
 
   for (var bots = 1; bots <= kMaxBots; bots++) {
-    test('a new game with $bots bot(s) gives every army a whole country', () {
+    test('a new game with $bots bot(s): America is yours, the bots own the '
+        'rest around their start countries', () {
       final s = createInitialGameState(botCount: bots);
       expect(s.armies, hasLength(bots + 1));
       expect(s.armies.first.kind, ArmyKind.human);
       expect(s.armies.skip(1).every((a) => a.kind == ArmyKind.ai), isTrue);
       for (final a in s.armies) {
         final own = s.territories.where((t) => t.ownerArmyId == a.id);
+        expect(own.map((t) => t.id).toSet(), {
+          for (final t in s.territories)
+            if (graph.regions[t.id] == a.id.index) t.id,
+        });
         expect(
           own.map((t) => t.id).toSet(),
-          graph.startCities[a.id.index].toSet(),
+          containsAll(graph.startCities[a.id.index]),
         );
-        // America starts much stronger: it is surrounded by bots.
-        final units = a.id == ArmyId.army1
-            ? kPlayerStartUnitsPerCity
-            : kStartUnitsPerCity;
-        expect(own.every((t) => t.unitCount == units), isTrue);
+        final home = graph.startCities[a.id.index].toSet();
+        for (final t in own) {
+          if (a.id == ArmyId.army1) {
+            // America starts much stronger: it is surrounded by bots.
+            expect(t.unitCount, kPlayerStartUnitsPerCity);
+          } else if (home.contains(t.id)) {
+            expect(t.unitCount, kStartUnitsPerCity);
+          } else {
+            expect(
+              t.unitCount,
+              inInclusiveRange(kNeutralCityMinUnits, kNeutralCityMaxUnits),
+            );
+          }
+        }
         expect(a.diamondBalance, kStartDiamonds);
         expect(a.totalUnitPool, kStartUnitPool);
         expect(a.cards, kStartCards);
@@ -267,20 +281,63 @@ void main() {
     });
   }
 
-  test('there is no empty land: neutral cities hold 50 to 70 soldiers', () {
+  test('with all six bots every city of Africa belongs to someone', () {
     for (var seed = 0; seed < 5; seed++) {
-      final s = createInitialGameState(botCount: 3, random: Random(seed));
-      final neutral = s.territories.where((t) => t.ownerArmyId == null);
-      final started = graph.startCities.take(4).expand((g) => g).length;
-      expect(neutral.length, kTerritoryCount - started);
-      for (final t in neutral) {
+      final s = createInitialGameState(
+        botCount: kMaxBots,
+        random: Random(seed),
+      );
+      expect(s.territories.where((t) => t.ownerArmyId == null), isEmpty);
+      // The bots' other cities hold 50 to 70 soldiers, not all the same.
+      final home = graph.startCities.expand((g) => g).toSet();
+      final others = s.territories.where((t) => !home.contains(t.id));
+      for (final t in others) {
         expect(
           t.unitCount,
           inInclusiveRange(kNeutralCityMinUnits, kNeutralCityMaxUnits),
         );
       }
-      // Not all the same.
-      expect(neutral.map((t) => t.unitCount).toSet().length, greaterThan(5));
+      expect(others.map((t) => t.unitCount).toSet().length, greaterThan(5));
+    }
+    // Every bot holds one connected stretch of land.
+    for (var army = 1; army <= kMaxBots; army++) {
+      final mine = {
+        for (var id = 0; id < graph.regions.length; id++)
+          if (graph.regions[id] == army) id,
+      };
+      final seen = {mine.first};
+      final queue = [mine.first];
+      while (queue.isNotEmpty) {
+        for (final nb in graph.getById(queue.removeLast()).adjacentIds) {
+          if (mine.contains(nb) && seen.add(nb)) queue.add(nb);
+        }
+      }
+      expect(seen, mine, reason: 'bot $army');
+    }
+  });
+
+  test('cities are separate patches with empty land between them', () {
+    // No two city areas touch: the land between them belongs to nobody
+    // and cannot be attacked ("boş alan, saldırı yapılmaz").
+    Path pathOf(int id) {
+      final p = Path();
+      for (final ring in graph.cityOutlines[id]) {
+        p.addPolygon(ring, true);
+      }
+      return p;
+    }
+
+    for (final t in graph.territories) {
+      expect(graph.cityOutlines[t.id], hasLength(1), reason: t.name);
+      final mine = pathOf(t.id);
+      // The city itself stands on its patch.
+      expect(mine.contains(graph.getPosition(t.id)), isTrue, reason: t.name);
+      for (final adj in t.adjacentIds) {
+        // A point of the neighbour's patch is never inside this one.
+        for (final p in graph.cityOutlines[adj].first) {
+          expect(mine.contains(p), isFalse, reason: '${t.name} / $adj');
+        }
+      }
     }
   });
 

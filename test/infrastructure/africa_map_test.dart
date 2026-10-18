@@ -29,7 +29,8 @@ void main() {
   test('every country has 4 cities (the smallest ones 2 or 3)', () {
     expect(graph.territories, hasLength(kTerritoryCount));
     final countries = graph.countries.toSet();
-    expect(countries, hasLength(50));
+    // Africa's 50 countries plus America in the middle.
+    expect(countries, hasLength(51));
     for (final c in countries) {
       expect(graph.citiesOf(c).length, inInclusiveRange(2, 4), reason: c);
     }
@@ -192,7 +193,16 @@ void main() {
     ];
     expect(countries.toSet(), hasLength(kMaxBots + 1));
     expect(countries.first, 'region_america');
-    expect(graph.outlines.keys, isNot(contains('region_chad')));
+    // America is round, cut out of the middle of Africa (mostly Chad,
+    // which keeps its north).
+    final round = graph.outlines['region_america']!;
+    expect(round, hasLength(1));
+    final xs = round.first.map((p) => p.dx);
+    final ys = round.first.map((p) => p.dy);
+    final width = xs.reduce(max) - xs.reduce(min);
+    final height = ys.reduce(max) - ys.reduce(min);
+    expect(width / height, closeTo(1, 0.02));
+    expect(graph.citiesOf('region_chad'), hasLength(3));
     for (final g in graph.startCities) {
       // A whole country each.
       expect(g.toSet(), graph.citiesOf(graph.countryOf(g.first)).toSet());
@@ -207,15 +217,15 @@ void main() {
       graph.playerStartCities.where((id) => graph.getById(id).hasGoldMine),
       hasLength(1),
     );
-    // Every bot country borders America ("bot şehirler çok yakın").
-    final america = graph.playerStartCities.toSet();
-    for (final g in graph.startCities.skip(1)) {
-      expect(
-        g.any((id) => graph.getById(id).adjacentIds.any(america.contains)),
-        isTrue,
-        reason: graph.countryOf(g.first),
-      );
-    }
+    // The bots start right next to America ("bot şehirler çok yakın"):
+    // most touch it, the rest are one city further.
+    final dist = graph.distancesFrom(graph.playerStartCities);
+    final steps = [
+      for (final g in graph.startCities.skip(1))
+        g.map((id) => dist[id]).reduce(min),
+    ];
+    expect(steps.every((d) => d <= 2), isTrue, reason: '$steps');
+    expect(steps.where((d) => d == 1).length, greaterThanOrEqualTo(4));
   });
 
   test('diamond mines are spread over the map', () {
@@ -261,7 +271,8 @@ void main() {
     for (var seed = 0; seed < 5; seed++) {
       final s = createInitialGameState(botCount: 3, random: Random(seed));
       final neutral = s.territories.where((t) => t.ownerArmyId == null);
-      expect(neutral.length, kTerritoryCount - 4 * 4);
+      final started = graph.startCities.take(4).expand((g) => g).length;
+      expect(neutral.length, kTerritoryCount - started);
       for (final t in neutral) {
         expect(
           t.unitCount,

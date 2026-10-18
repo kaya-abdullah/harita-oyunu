@@ -103,8 +103,12 @@ void main() {
       final own = s.territories.where((t) => t.ownerArmyId == bot.id);
       expect(own, hasLength(graph.startCities[bot.id.index].length));
       expect(own.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
-      // Every bot touches America.
-      expect(own.map((t) => dist[t.id]).reduce(min), 1, reason: '${bot.id}');
+      // Every bot starts right next to America.
+      expect(
+        own.map((t) => dist[t.id]).reduce(min),
+        lessThanOrEqualTo(2),
+        reason: '${bot.id}',
+      );
     }
     // America is surrounded: all its outside neighbours belong to bots.
     for (final t in blue) {

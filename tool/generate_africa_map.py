@@ -117,14 +117,20 @@ COUNTRY_CITIES = OrderedDict([
         (7.99, 16.97, "Agadez", "Agadez", ""),
         (12.92, 18.69, "Bilma", "Bilma", ""),
     ]),
-    # "Ortaya Amerika ekle, Amerika biz olalım": the country in the middle
-    # of Africa (Chad's land) is the player's America, with four American
-    # cities.
+    # Chad keeps only its north: America (below) takes the south.
+    ("chad", [
+        (19.1, 17.92, "Faya", "Faya", ""),
+        (21.58, 17.18, "Fada", "Fada", ""),
+        (16.99, 21.36, "Bardai", "Bardai", ""),
+    ]),
+    # "Ortaya Amerika ekle, Amerika biz olalım; Amerika'da 4 şehir olsun":
+    # a round country in the middle of Africa (see AMERICA_CENTRE), the
+    # player's America, with four American cities in a square.
     ("america", [
-        (15.04, 12.13, "Vaşington", "Washington", "gold"),
-        (19.1, 17.92, "Şikago", "Chicago", ""),
-        (20.83, 13.83, "New York", "New York", ""),
-        (18.39, 9.14, "Los Angeles", "Los Angeles", ""),
+        (17.2, 12.8, "Vaşington", "Washington", "gold"),
+        (19.8, 12.8, "New York", "New York", ""),
+        (17.2, 10.2, "Şikago", "Chicago", ""),
+        (19.8, 10.2, "Los Angeles", "Los Angeles", ""),
     ]),
     ("sudan", [
         (32.53, 15.59, "Hartum", "Khartoum", "gold"),
@@ -350,13 +356,15 @@ COUNTRY_CITIES = OrderedDict([
     ]),
 ])
 
-# Start countries, in the order players are added: you (America, in the
-# middle), then bot 1 … bot 6 all around it — "bot şehirler çok yakın olsun
-# birbirine": every bot country borders America and its bot neighbours.
-START_COUNTRIES = [
-    "america", "libya", "sudan", "central_africa", "cameroon", "nigeria",
-    "niger",
-]
+# America: a circle (lon, lat, radius in degrees) cut out of the middle of
+# Africa — mostly Chad's south, a little of its neighbours.
+AMERICA_CENTRE = (18.5, 11.5)
+AMERICA_RADIUS = 4.0
+
+# The player starts in America; the six bots start in the countries closest
+# to it ("bot şehirler çok yakın olsun"), chosen by the generator.
+PLAYER_COUNTRY = "america"
+BOTS = 6
 
 # Diamond mines: real diamond fields. Each marks the city area it lies in.
 MINES = [
@@ -380,9 +388,8 @@ MINES = [
 def main():
     geo = json.load(open(os.path.join(ROOT, "tool/data/africa_geo.json")))
     country_rings = geo["countries"]
-    country_rings["america"] = country_rings.pop("chad")
-    assert set(country_rings) == set(COUNTRY_CITIES), (
-        set(country_rings) ^ set(COUNTRY_CITIES))
+    assert set(country_rings) | {"america"} == set(COUNTRY_CITIES), (
+        (set(country_rings) | {"america"}) ^ set(COUNTRY_CITIES))
     rings = [ring for rs in country_rings.values() for ring in rs]
     shapes = country_shapes(country_rings)
 
@@ -469,15 +476,26 @@ def main():
 
     mines = {area_at(lon, lat) for lon, lat in MINES}
 
-    # ── Start countries ───────────────────────────────────────────────────
-    starts = [[i for i in range(n) if cities[i][5] == c]
-              for c in START_COUNTRIES]
+    # ── Start countries: America, then the countries nearest to it ───────
+    def cities_of(country):
+        return [i for i in range(n) if cities[i][5] == country]
+
+    player = cities_of(PLAYER_COUNTRY)
+    steps = bfs(adjacency, player, n)
+    ax, ay = AMERICA_CENTRE
+    others = [c for c in COUNTRY_CITIES if c != PLAYER_COUNTRY]
+    # Countries touching America first, then by how close their nearest
+    # city lies.
+    others.sort(key=lambda c: (
+        min(steps[i] for i in cities_of(c)),
+        min(math.hypot(cities[i][0] - ax, cities[i][1] - ay)
+            for i in cities_of(c)),
+    ))
+    start_countries = [PLAYER_COUNTRY] + others[:BOTS]
+    starts = [cities_of(c) for c in start_countries]
     country_of = [c[5] for c in cities]
     for x, gx in enumerate(starts):
-        assert connected_within(adjacency, gx), START_COUNTRIES[x]
-        if x > 0:
-            touching = any(b in adjacency[a] for a in gx for b in starts[0])
-            assert touching, (START_COUNTRIES[x], "does not border America")
+        assert connected_within(adjacency, gx), start_countries[x]
 
     # ── Satellite picture (only re-cut when a Blue Marble path is given) ──
     if len(sys.argv) > 1:
@@ -601,7 +619,7 @@ def main():
     print(f"frame {cols}x{rows}, {n} cities in {len(COUNTRY_CITIES)} "
           f"countries, {len(mines)} mines, sea links {sea_links}, "
           f"{len(borders)} border lines, neighbours min {min(degrees)} "
-          f"max {max(degrees)}, start cities {starts}")
+          f"max {max(degrees)}, start {start_countries} {starts}")
     print("smallest areas:", [(round(a, 2), c) for a, c in sizes[:6]])
     print("largest areas:", [(round(a, 1), c) for a, c in sizes[-4:]])
     lonely = [cities[i][3] for i in range(n) if degrees[i] < 2]
@@ -624,6 +642,11 @@ def country_shapes(country_rings):
     shapes["morocco"] = keep_pieces(shapes["morocco"].difference(south))
     shapes["western_sahara"] = keep_pieces(
         unary_union([shapes["western_sahara"], cut]).buffer(1e-9))
+    # America: a round country cut out of the middle.
+    circle = Point(*AMERICA_CENTRE).buffer(AMERICA_RADIUS, 64)
+    for key in list(shapes):
+        shapes[key] = keep_pieces(shapes[key].difference(circle))
+    shapes["america"] = circle
     return shapes
 
 
@@ -712,6 +735,21 @@ def connected(adjacency, n):
                     q.append(nb)
         comps.append(comp)
     return comps
+
+
+def bfs(adjacency, sources, n):
+    """Steps from every city to the nearest of [sources]."""
+    dist = [1 << 20] * n
+    q = deque(sources)
+    for s in sources:
+        dist[s] = 0
+    while q:
+        cur = q.popleft()
+        for nb in adjacency[cur]:
+            if dist[nb] > dist[cur] + 1:
+                dist[nb] = dist[cur] + 1
+                q.append(nb)
+    return dist
 
 
 def connected_within(adjacency, group):

@@ -45,3 +45,44 @@ Amerika 6 botun ortasında olduğu için her şehrinde 150 asker ile başlıyor
 - Yeni / güncellenen: Amerika ve 4 şehri, botların Amerika'ya değmesi,
   150 asker, denge simülasyonu, eğik haritada dokunma/kaydırma/yakınlaştırma,
   görüntü karşılaştırma (3D), uçtan uca oyun (seçim ekranı yok → 6 bot).
+
+---
+
+# v1.8.0: Çizgisiz Afrika, yuvarlak ve ayrıntılı Amerika, bina grupları
+
+Kaynak: `istekler/WhatsApp Image 2026-10-18 at 19.47.18.jpeg` (Mustafa'nın
+elle yazdığı not ve çizimleri).
+
+## Not (okunduğu gibi)
+> Afrika'daki şu çizgileri sil, böyle olacak. Sonra ortasına Amerika ekle,
+> detaylı olsun. Amerika ortada olsun ve Amerika'da 4 şehir olsun, içinde,
+> 3D'de. Binalar böyle değil, böyle yani (bir bina grubu) → şehir. Ve
+> haritanın her yerinde böyle bot şehirler olsun.
+
+Babasıyla netleştirildi: boş (kimsenin olmayan) şehirler kalıyor.
+
+## Yapılanlar
+1. "Çizgileri sil." → Afrika'da hiç ülke ya da şehir çizgisi kalmadı. Seçili
+   şehrin komşuları artık beyaz çizgiyle değil, hafif bir parlamayla
+   gösteriliyor. Sadece orduların renkli sınır duvarları duruyor.
+2. "Ortasına Amerika, detaylı, 4 şehir, 3D." → Amerika artık Afrika'nın
+   ortasında yuvarlak bir ülke (Çad'ın güneyinden ve komşularından
+   kesildi; Çad kuzeyde 3 şehirle kaldı: Faya, Fada, Bardai). İçinde kare
+   düzeninde 4 şehir var: Vaşington, New York, Şikago, Los Angeles. Amerika
+   diğer topraklardan daha yüksek duruyor (taş yamaç). Üstünde yeşil çimen,
+   göl, şehirleri birbirine bağlayan yollar, ağaçlar ve kuleli bir taş sur
+   var. Bayrak ortada duruyor.
+3. "Binalar böyle değil, böyle." → Her şehir artık 5 binalık bir grup:
+   en yüksek bina ortada. Altın madenli başkentlerin ortasında taçlı bir
+   kule var, Amerika'nın şehirleri gökdelen.
+4. "Her yerde bot şehirler." → 6 bot Amerika'nın hemen yanında başlıyor:
+   Kamerun, Orta Afrika, Çad, Sudan, Nijerya (hepsi Amerika'ya değiyor) ve
+   Nijer (bir şehir ötede).
+
+Harita artık 185 şehir. Eski kayıtlar açılmıyor, yeni oyun başlıyor.
+
+## Test
+- `flutter analyze` temiz, 108 testin hepsi geçiyor (denge simülasyonu
+  dahil: hiçbir şey yapmayan bir Amerika bile 6 bota karşı 5 tur dayanıyor).
+- Yeni / güncellenen: yuvarlak Amerika, Çad'ın 3 şehri, botların başlangıcı,
+  görüntü karşılaştırma (3D, çizgisiz).

@@ -33,15 +33,17 @@ import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 ///   - owned land raised like a plateau ("oyunu 3D yap"): a dark cliff in
 ///     the army's colour under its edge, the land tinted in the army colour
 ///     on top (the land still shows through);
-///   - bold country borders (no lines between the cities of a country —
-///     "beyaz çizgileri kaldır");
+///   - no country or city lines at all ("Afrika'daki çizgileri sil");
+///   - America, the round country in the middle, in detail and raised
+///     higher ([_drawAmerica]);
 ///   - "walls": a dark line in each army's colour along its frontier;
 ///   - a dashed sea route to Madagascar;
-///   - selection / neighbour / card-target outlines;
-///   - every city: a little 3D building in its owner's colour (a tower on
-///     gold mines, with a gold crown; a diamond on diamond mines), drawn
-///     back to front, and above it a label with a little soldier and the
-///     number of soldiers in the city.
+///   - the selected city (yellow), a soft glow on its neighbours, orange
+///     card-target outlines;
+///   - every city: a little group of 3D buildings in its owner's colour (a
+///     tower with a gold crown on gold mines, skyscrapers in America, a
+///     diamond on diamond mines), drawn back to front, then above each a
+///     label with a little soldier and the number of soldiers in the city.
 ///
 /// The whole map is tilted by [TiltedMap] around the game widget, so the
 /// buildings stand on a land seen from an angle.
@@ -107,10 +109,17 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
         });
   }
 
+  // Cached buildings and what they were recorded for.
+  Picture? _buildingsPicture;
+  List<Territory>? _buildingsFor;
+  double _buildingsH = 0;
+
   @override
   void onRemove() {
     _landPicture?.dispose();
     _landPicture = null;
+    _buildingsPicture?.dispose();
+    _buildingsPicture = null;
     super.onRemove();
   }
 
@@ -164,25 +173,10 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
 
   static final Paint _satellitePaint = Paint()
     ..filterQuality = FilterQuality.medium;
-  static final Paint _satBorderPaint = Paint()
-    ..color = const Color(0xE6FFFFFF)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.4
-    ..strokeJoin = StrokeJoin.round;
   static final Paint _shorePaint = Paint()
     ..color = const Color(0xFFB3E5FC)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 7
-    ..strokeJoin = StrokeJoin.round;
-  static final Paint _borderHalo = Paint()
-    ..color = const Color(0x99FFFFFF)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 3
-    ..strokeJoin = StrokeJoin.round;
-  static final Paint _borderPaint = Paint()
-    ..color = const Color(0xCC4E342E)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.3
     ..strokeJoin = StrokeJoin.round;
   static final Paint _seaLinkPaint = Paint()
     ..color = const Color(0xCCFFFFFF)
@@ -194,11 +188,9 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     ..strokeWidth = 3.2
     ..strokeJoin = StrokeJoin.round;
   static final Paint _selectedFill = Paint()..color = const Color(0x40FFD600);
+  // Neighbours of the selected city glow softly (no white lines).
   static final Paint _neighbourPaint = Paint()
-    ..color = const Color(0xE6FFFFFF)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 2
-    ..strokeJoin = StrokeJoin.round;
+    ..color = const Color(0x40FFFFFF);
   static final Paint _abilityTargetPaint = Paint()
     ..color = const Color(0xFFFF6D00)
     ..style = PaintingStyle.stroke
@@ -326,8 +318,9 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     }
 
     // ── Cities and their soldiers ───────────────────────────────────────
-    // Buildings back to front (the far ones are behind the near ones),
-    // then every label on top.
+    // Buildings back to front (the far ones are behind the near ones) —
+    // recorded once per game state and label size — then every label on
+    // top.
     final label = math.min(maxLabelWorld, labelScreenPx / zoom);
     final shown =
         [
@@ -337,10 +330,27 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
           (a, b) =>
               graph.getPosition(a.id).dy.compareTo(graph.getPosition(b.id).dy),
         );
-    for (final t in shown) {
-      _drawBuilding(canvas, t, graph.getPosition(t.id), label);
+    final h = (label * 4).round() / 4;
+    if (_buildingsPicture == null ||
+        !identical(_buildingsFor, territories) ||
+        _buildingsH != h) {
+      _buildingsPicture?.dispose();
+      final recorder = PictureRecorder();
+      final c = Canvas(recorder);
+      final all = [...territories]
+        ..sort(
+          (a, b) =>
+              graph.getPosition(a.id).dy.compareTo(graph.getPosition(b.id).dy),
+        );
+      for (final t in all) {
+        _drawBuilding(c, t, graph.getPosition(t.id), h);
+      }
+      _drawFlag(c, _americaCentre, h * 2.6);
+      _buildingsPicture = recorder.endRecording();
+      _buildingsFor = territories;
+      _buildingsH = h;
     }
-    _drawFlag(canvas, _americaCentre, label * 2.6);
+    canvas.drawPicture(_buildingsPicture!);
     for (final t in shown) {
       _drawLabel(canvas, t, graph.getPosition(t.id), label);
     }
@@ -374,7 +384,8 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     final armyLand = <ArmyId, Path>{};
     for (final t in territories) {
       final owner = t.ownerArmyId;
-      if (owner == null) continue;
+      // America is raised and drawn on its own (_drawAmerica).
+      if (owner == null || _inAmerica(t.id)) continue;
       (armyLand[owner] ??= Path()).addPath(_cityPaths[t.id], Offset.zero);
     }
     for (var step = cliffSteps; step >= 1; step--) {
@@ -421,13 +432,9 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
       (owner, path) => canvas.drawPath(path, tints[owner.index]),
     );
 
-    if (satellite != null) {
-      _countries.forEach((_, path) => canvas.drawPath(path, _satBorderPaint));
-    } else {
-      _countries.forEach((_, path) => canvas.drawPath(path, _borderHalo));
-      _countries.forEach((_, path) => canvas.drawPath(path, _borderPaint));
-    }
-
+    // No country or city lines ("Afrika'daki çizgileri sil"): only the
+    // army walls show where land changes hands.
+    _drawAmerica(canvas, territories);
     _drawWalls(canvas, territories);
     for (final (a, b) in _seaLinks) {
       _drawDashed(canvas, a, b);
@@ -461,16 +468,150 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     }
   }
 
-  /// Middle of America (the player's start country), where its flag
-  /// stands.
-  late final Offset _americaCentre = () {
-    final ids = graph.playerStartCities;
-    var sum = Offset.zero;
-    for (final id in ids) {
-      sum += graph.getPosition(id);
+  /// Middle of America, where its flag stands.
+  late final Offset _americaCentre = _americaPath.getBounds().center;
+
+  /// America's round outline.
+  late final Path _americaPath = _countries[americaKey] ?? Path();
+
+  /// How far America stands above the rest of the land.
+  static const double americaLift = 9;
+
+  /// America in detail ("detaylı olsun"): a round, raised land with a stone
+  /// cliff, green grass, a lake, roads from the middle to its four cities
+  /// and around them, trees, and a stone wall with towers around it. Each
+  /// city's part is tinted lightly in its owner's colour.
+  void _drawAmerica(Canvas canvas, List<Territory> territories) {
+    final bounds = _americaPath.getBounds();
+    if (bounds.isEmpty) return;
+    final c = bounds.center;
+    final radius = bounds.width / 2;
+    for (var step = cliffSteps; step >= 1; step--) {
+      canvas.drawPath(
+        _americaPath.shift(Offset(0, americaLift * step / cliffSteps)),
+        Paint()
+          ..color = Color.lerp(
+            const Color(0xFF8D6E63),
+            _black,
+            0.2 + 0.4 * step / cliffSteps,
+          )!,
+      );
     }
-    return sum / ids.length.toDouble();
-  }();
+    canvas.drawPath(
+      _americaPath,
+      Paint()
+        ..shader = Gradient.radial(c, radius, const [
+          Color(0xFF9CCC65),
+          Color(0xFF558B2F),
+        ]),
+    );
+    final cities = [
+      for (final t in territories)
+        if (_inAmerica(t.id)) t,
+    ];
+    for (final t in cities) {
+      final owner = t.ownerArmyId;
+      if (owner == null) continue;
+      canvas.drawPath(
+        _cityPaths[t.id],
+        Paint()..color = AppTheme.armyPrimaries[owner.index].withAlpha(70),
+      );
+    }
+
+    // Lake in the south.
+    final lake = Rect.fromCenter(
+      center: c.translate(0, radius * 0.68),
+      width: radius * 0.42,
+      height: radius * 0.16,
+    );
+    canvas
+      ..drawOval(lake.inflate(0.8), Paint()..color = const Color(0xFFD7CCC8))
+      ..drawOval(lake, Paint()..color = const Color(0xFF29B6F6));
+
+    // Roads: from the middle to every city, and a ring through them.
+    final spots = [for (final t in cities) graph.getPosition(t.id)];
+    final ring = spots.isEmpty
+        ? radius * 0.45
+        : spots.map((p) => (p - c).distance).reduce(math.max);
+    final roads = Path()..addOval(Rect.fromCircle(center: c, radius: ring));
+    for (final p in spots) {
+      roads
+        ..moveTo(c.dx, c.dy)
+        ..lineTo(p.dx, p.dy);
+    }
+    canvas
+      ..drawPath(
+        roads,
+        Paint()
+          ..color = const Color(0xFF616161)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.6,
+      )
+      ..drawPath(
+        roads,
+        Paint()
+          ..color = const Color(0xFFFFEB3B)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.35,
+      )
+      ..drawCircle(c, 4.5, Paint()..color = const Color(0xFFBDBDBD));
+
+    // Trees, away from the roads, cities and the lake.
+    final rng = math.Random(4);
+    final dark = Paint()..color = const Color(0xFF2E7D32);
+    final light = Paint()..color = const Color(0xFF66BB6A);
+    var planted = 0;
+    for (var i = 0; i < 400 && planted < 70; i++) {
+      final a = rng.nextDouble() * 2 * math.pi;
+      final d = math.sqrt(rng.nextDouble()) * radius * 0.9;
+      final p = c + Offset(math.cos(a), math.sin(a)) * d;
+      if (((p - c).distance - ring).abs() < 3.5) continue;
+      if ((p - c).distance < 7) continue;
+      if (lake.inflate(3).contains(p)) continue;
+      if (spots.any((s) => (s - p).distance < 12)) continue;
+      if (spots.any((s) => _distToSegment(p, c, s) < 3)) continue;
+      canvas
+        ..drawCircle(p.translate(0.5, 0.6), 1.8, _groundShadow)
+        ..drawCircle(p, 1.7, dark)
+        ..drawCircle(p.translate(-0.5, -0.5), 0.8, light);
+      planted++;
+    }
+
+    // Stone wall with towers all around.
+    canvas
+      ..drawPath(
+        _americaPath,
+        Paint()
+          ..color = const Color(0xFF5D4037)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.6,
+      )
+      ..drawPath(
+        _americaPath,
+        Paint()
+          ..color = const Color(0xFFBCAAA4)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    for (var i = 0; i < 12; i++) {
+      final a = i * math.pi / 6;
+      final p = c + Offset(math.cos(a), math.sin(a)) * radius;
+      canvas
+        ..drawCircle(p, 2.8, Paint()..color = const Color(0xFF5D4037))
+        ..drawCircle(p, 2, Paint()..color = const Color(0xFFD7CCC8));
+    }
+  }
+
+  static double _distToSegment(Offset p, Offset a, Offset b) {
+    final ab = b - a;
+    final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (len2 == 0) return (p - a).distance;
+    final t = (((p - a).dx * ab.dx + (p - a).dy * ab.dy) / len2).clamp(
+      0.0,
+      1.0,
+    );
+    return (p - (a + ab * t)).distance;
+  }
 
   /// America's flag ("Amerika biz olalım") on a pole [h] tall standing on
   /// [p]: red and white stripes and a blue corner with white stars.
@@ -525,55 +666,82 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     );
   }
 
-  /// Height of a city's building, for a label [h] map units tall.
-  static double buildingHeight(Territory t, double h) =>
-      h * (t.hasGoldMine ? 1.5 : 0.95);
+  /// Whether city [id] lies in America (the round country in the middle).
+  bool _inAmerica(int id) => graph.countryOf(id) == americaKey;
 
-  /// One city as a little 3D building standing on [p] — a box with a lit
-  /// roof and a shaded side in its owner's colour (light stone for nobody's
-  /// city). Gold mines are a tall tower with a gold crown on the roof,
-  /// diamond mines show a diamond beside it. [h] is the label height.
+  /// Country key of America in the map data.
+  static const String americaKey = 'region_america';
+
+  /// Height of a city's tallest building, for a label [h] map units tall:
+  /// America has skyscrapers, gold mine capitals a tower.
+  double _buildingHeight(Territory t, double h) =>
+      h * (_inAmerica(t.id) ? 2.1 : (t.hasGoldMine ? 1.5 : 1.0));
+
+  // Building places of a city around its centre, back to front:
+  // (x, y, width, height) in units of half a label height. The tallest is
+  // in the middle ("binalar böyle değil, böyle": a city is a group of
+  // buildings, not one box).
+  static const List<(double, double, double, double)> _cluster = [
+    (-0.95, -0.55, 0.8, 0.75),
+    (0.85, -0.6, 0.8, 0.85),
+    (0.0, -0.2, 1.0, 1.0),
+    (-1.05, 0.45, 0.7, 0.5),
+    (0.95, 0.4, 0.75, 0.55),
+  ];
+
+  /// One city as a little group of 3D buildings around [p], in its owner's
+  /// colour (light stone for nobody's city): boxes with lit roofs, shaded
+  /// sides and windows, the tallest in the middle. Gold mines have a tower
+  /// with a gold crown, diamond mines a diamond beside them, and America's
+  /// cities are glassy skyscrapers. [h] is the label height.
   void _drawBuilding(Canvas canvas, Territory t, Offset p, double h) {
     final owner = t.ownerArmyId;
-    final base = owner == null
+    var base = owner == null
         ? const Color(0xFFE0DCD2)
         : AppTheme.armyPrimaries[owner.index];
-    final w = h * 0.9;
-    final tall = buildingHeight(t, h);
-    final depth = h * 0.4;
+    final america = _inAmerica(t.id);
+    if (america) base = Color.lerp(base, const Color(0xFFB3E5FC), 0.35)!;
+    final u = h * 0.5;
+    final tallest = _buildingHeight(t, h);
 
-    // Shadow on the ground.
     canvas.drawOval(
       Rect.fromCenter(
-        center: p.translate(depth * 0.4, 0),
-        width: w * 1.6,
-        height: depth * 1.2,
+        center: p.translate(u * 0.3, u * 0.1),
+        width: u * 4.6,
+        height: u * 1.9,
       ),
       _groundShadow,
     );
-    if (t.hasGoldMine) {
-      _drawBox(
+    // Small differences between cities, the same every frame.
+    final rng = math.Random(t.id * 7919 + 13);
+    Offset? roof;
+    for (var i = 0; i < _cluster.length; i++) {
+      final (x, y, w, tall) = _cluster[i];
+      final main = i == 2;
+      final height = main
+          ? tallest
+          : tallest * tall * (0.6 + 0.3 * rng.nextDouble());
+      final top = _drawBox(
         canvas,
-        p.translate(-w * 0.45, 0),
-        w * 0.6,
-        h * 0.6,
-        depth,
-        base,
+        p.translate(x * u, y * u),
+        w * u,
+        height,
+        w * u * 0.5,
+        main ? base : Color.lerp(base, _black, 0.08 * rng.nextDouble())!,
       );
-      _drawBox(canvas, p.translate(w * 0.5, 0), w * 0.6, h * 0.75, depth, base);
+      if (main) roof = top;
     }
-    final roof = _drawBox(canvas, p, w, tall, depth, base);
     if (t.hasGoldMine) {
-      _drawCrown(canvas, roof.translate(0, -h * 0.12), w * 0.42);
+      _drawCrown(canvas, roof!.translate(0, -h * 0.12), u * 0.42);
     }
     if (t.hasDiamondMine) {
-      _drawGem(canvas, p.translate(w * 0.95, -h * 0.3), h * 0.55);
+      _drawGem(canvas, p.translate(u * 2.1, -h * 0.3), h * 0.55);
     }
   }
 
   /// A box [w] wide, [tall] high and [depth] deep with its front bottom
-  /// edge centred on [p]: front face, a lit roof leaning back and a shaded
-  /// right side. Returns the middle of the roof.
+  /// edge centred on [p]: front face with lit windows, a lit roof leaning
+  /// back and a shaded right side. Returns the middle of the roof.
   Offset _drawBox(
     Canvas canvas,
     Offset p,
@@ -608,12 +776,10 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
       ..drawPath(side, Paint()..color = Color.lerp(color, _black, 0.45)!)
       ..drawRect(front, Paint()..color = Color.lerp(color, _black, 0.15)!)
       ..drawPath(roof, Paint()..color = Color.lerp(color, _white, 0.35)!);
-    // Windows: two rows of lit squares on the front.
-    final win = w * 0.16;
-    for (var row = 0; row < (tall > w ? 3 : 2); row++) {
+    // Windows: rows of lit squares on the front, as many as fit.
+    final win = w * 0.18;
+    for (var y = top + win; y + win < p.dy - win * 0.6; y += win * 1.9) {
       for (final x in [l + w * 0.2, r - w * 0.2 - win]) {
-        final y = top + tall * 0.18 + row * win * 1.9;
-        if (y + win > p.dy - win * 0.5) continue;
         canvas.drawRect(Rect.fromLTWH(x, y, win, win), _windowPaint);
       }
     }
@@ -640,7 +806,7 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     final soldierW = h * 0.55;
     final padX = h * 0.22;
     final w = padX + soldierW + h * 0.12 + textW + padX;
-    final top = p.dy - buildingHeight(t, h) - h * 0.55 - h;
+    final top = p.dy - _buildingHeight(t, h) - h * 0.5 - h;
     final box = RRect.fromRectAndRadius(
       Rect.fromLTWH(p.dx - w / 2, top, w, h),
       Radius.circular(h * 0.35),

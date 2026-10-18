@@ -26,8 +26,9 @@ part 'save_data.g.dart';
 /// armies in one list).
 /// Version 4: cards with counts.
 /// Version 5: countries split into cities (182 cities instead of tiles).
+/// Version 6: round America in the middle (185 cities).
 /// Older saves are rejected and discarded by the repository.
-const int kSaveDataSchemaVersion = 5;
+const int kSaveDataSchemaVersion = 6;
 
 // ─── SaveData ─────────────────────────────────────────────────────────────────
 

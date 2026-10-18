@@ -5,7 +5,7 @@ import 'package:harita/core/constants.dart';
 
 void main() {
   test('Core constants are defined correctly', () {
-    expect(kTerritoryCount, 182);
+    expect(kTerritoryCount, 185);
     expect(kBigBaseCapacity, 150);
     expect(kTurnUnlockBombardment, 10);
     expect(kTurnUnlockSoldierSpell, 12);

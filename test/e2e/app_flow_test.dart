@@ -18,6 +18,7 @@ import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/domain/services/ability_service.dart';
+import 'package:harita/game/tilted_map.dart';
 import 'package:harita/game/war_game.dart';
 import 'package:harita/infrastructure/ai/greedy_ai_agent.dart';
 import 'package:harita/infrastructure/persistence/hive_save_repository.dart';
@@ -158,9 +159,7 @@ void main() {
         .game!;
     // The map is tilted in 3D: canvas points go through the widget
     // transforms to find where they show on screen.
-    final canvas = tester.renderObject<RenderBox>(
-      find.byType(GameWidget<WarGame>),
-    );
+    final tilted = tester.renderObject<RenderBox>(find.byType(TiltedMap));
     Future<void> tapCity(int id) async {
       final p = game.mapComponent.graph.positionOf(id).offset;
       // Bring the city into the middle of the view first (the tilted map
@@ -168,7 +167,9 @@ void main() {
       game.camera.viewfinder.position = Vector2(p.dx, p.dy);
       await tester.pump();
       final s = game.camera.localToGlobal(Vector2(p.dx, p.dy));
-      await tester.tapAt(canvas.localToGlobal(Offset(s.x, s.y)));
+      await tester.tapAt(
+        tilted.localToGlobal(TiltedMap.toScreen(Offset(s.x, s.y), tilted.size)),
+      );
       await tester.pump(const Duration(milliseconds: 50));
     }
 

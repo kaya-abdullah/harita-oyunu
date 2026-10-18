@@ -14,17 +14,29 @@ import 'package:harita/game/war_game.dart';
 /// A finger that goes down and up without moving further than [panSlop]
 /// (and without a second finger) is a tap on the map — select, attack,
 /// play a card — passed to [WarGame.tapAt]. The pointer positions a
-/// [Listener] receives are exact even on the tilted 3D map. This does not depend on
+/// [Listener] receives are turned into game-canvas points with
+/// [toCanvas], so on the tilted 3D map the finger stays on the spot of the
+/// map it touched. This does not depend on
 /// Flame's scale events, which skip one-finger drags unless the game also
 /// has drag listeners.
 class MapGestureLayer extends StatefulWidget {
-  const MapGestureLayer({super.key, required this.game, required this.child});
+  const MapGestureLayer({
+    super.key,
+    required this.game,
+    required this.child,
+    this.toCanvas,
+  });
 
   /// The game whose camera moves.
   final WarGame game;
 
   /// The game widget.
   final Widget child;
+
+  /// Turns a pointer position on this widget into the game-canvas point
+  /// shown there, when the canvas is drawn tilted ([TiltedMap.toCanvas]);
+  /// `null` when the canvas is shown as it is.
+  final Offset Function(Offset screen, Size size)? toCanvas;
 
   /// Distance in pixels a single finger moves before the map pans.
   static const double panSlop = 8;
@@ -35,13 +47,24 @@ class MapGestureLayer extends StatefulWidget {
 
 class _MapGestureLayerState extends State<MapGestureLayer> {
   final Map<int, Offset> _pointers = {};
-  Offset? _downAt;
+  // Where the single finger went down on the screen: the pan slop is
+  // measured on the screen, not on the (tilted) map.
+  Offset? _downScreen;
   bool _panning = false;
   bool _maybeTap = false;
   double _pinchStartDistance = 0;
   double _pinchStartZoom = 1;
 
   WarGame get _game => widget.game;
+
+  static Vector2 _vec(Offset o) => Vector2(o.dx, o.dy);
+
+  Offset _at(Offset screen) {
+    final map = widget.toCanvas;
+    final size = context.size;
+    if (map == null || size == null) return screen;
+    return map(screen, size);
+  }
 
   bool get _ready => _game.isLoaded;
 
@@ -59,9 +82,9 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
   }
 
   void _onDown(PointerDownEvent e) {
-    _pointers[e.pointer] = e.localPosition;
+    _pointers[e.pointer] = _at(e.localPosition);
     if (_pointers.length == 1) {
-      _downAt = e.localPosition;
+      _downScreen = e.localPosition;
       _panning = false;
       _maybeTap = true;
     } else {
@@ -74,15 +97,16 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
     final old = _pointers[e.pointer];
     if (old == null || !_ready) return;
     if (_pointers.length == 1) {
-      _pointers[e.pointer] = e.localPosition;
-      final start = _downAt ?? old;
+      final here = _at(e.localPosition);
+      _pointers[e.pointer] = here;
+      final start = _downScreen ?? e.localPosition;
       if (!_panning &&
           (e.localPosition - start).distance > MapGestureLayer.panSlop) {
         _panning = true;
         _maybeTap = false;
       }
       if (_panning) {
-        final d = e.localPosition - old;
+        final d = here - old;
         _game.panBy(Vector2(d.dx, d.dy));
       }
       return;
@@ -91,7 +115,7 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
     // and follow that point as it moves.
     final (a0, b0) = _firstTwo();
     final focalBefore = (a0 + b0) / 2;
-    _pointers[e.pointer] = e.localPosition;
+    _pointers[e.pointer] = _at(e.localPosition);
     final (a1, b1) = _firstTwo();
     final focal = (a1 + b1) / 2;
     final distance = (a1 - b1).distance;
@@ -108,14 +132,14 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
   void _onUp(PointerEvent e) {
     _pointers.remove(e.pointer);
     if (_maybeTap && e is PointerUpEvent && _pointers.isEmpty && _ready) {
-      _game.tapAt(Vector2(e.localPosition.dx, e.localPosition.dy));
+      final p = _at(e.localPosition);
+      _game.tapAt(Vector2(p.dx, p.dy));
     }
     _maybeTap = false;
     if (_pointers.length >= 2) {
       _startPinch();
     } else if (_pointers.length == 1) {
       // Keep panning with the finger that stays, without a jump.
-      _downAt = _pointers.values.first;
       _panning = true;
     }
   }
@@ -123,10 +147,7 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
   void _onSignal(PointerSignalEvent e) {
     if (e is! PointerScrollEvent || !_ready) return;
     final factor = e.scrollDelta.dy > 0 ? 1 / 1.15 : 1.15;
-    _game.zoomAt(
-      _game.userZoom * factor,
-      Vector2(e.localPosition.dx, e.localPosition.dy),
-    );
+    _game.zoomAt(_game.userZoom * factor, _vec(_at(e.localPosition)));
   }
 
   @override

@@ -86,3 +86,27 @@ Harita artık 185 şehir. Eski kayıtlar açılmıyor, yeni oyun başlıyor.
   dahil: hiçbir şey yapmayan bir Amerika bile 6 bota karşı 5 tur dayanıyor).
 - Yeni / güncellenen: yuvarlak Amerika, Çad'ın 3 şehri, botların başlangıcı,
   görüntü karşılaştırma (3D, çizgisiz).
+
+---
+
+# v1.8.1: Çok yakınlaştırınca ekranın maviye dönmesi düzeltildi
+
+Şikâyet (babası): "Haritayı çok yakınlaştırınca ekran tamamen maviye
+dönüyor."
+
+Sebep: Yakınlaşınca oyunun çizimi ekranın çok dışına taşıyordu. 3D eğimde bu
+taşan parçalar perspektifte "gözün arkasına" düşüyor ve telefonun GPU'su
+bütün resmi atıyordu; geriye sadece mavi gökyüzü kalıyordu.
+
+Düzeltme: Oyun önce ekran boyutunda düz bir resim olarak çiziliyor (taşan
+kısım kırpılıyor), sonra sadece bu resim eğiliyor. Dokunma, kaydırma ve
+yakınlaştırmalar ekran noktasından haritadaki noktaya tam olarak
+çevriliyor (`TiltedMap.toCanvas`).
+
+## Test
+- Yeni: en yakın zoom dahil (1×, 4×, 8×), haritanın ortasında ve
+  köşelerinde ekranın gökyüzü değil harita gösterdiği kontrol ediliyor. Bu
+  test düzeltmeden önce 8× zoomda "sadece gökyüzü" diye kırılıyordu.
+- Yeni: ekran ↔ harita noktası dönüşümü birebir geri dönüyor.
+- Parmakla kaydırma, iki parmakla yakınlaştırma, dokunarak seçme ve uçtan uca
+  oyun testleri yeni hesapla geçiyor. Toplam 110 test geçiyor.

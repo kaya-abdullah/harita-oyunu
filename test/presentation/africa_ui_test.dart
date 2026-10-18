@@ -1,4 +1,6 @@
 // Widget tests for the Africa game screen.
+import 'dart:ui' as ui;
+
 import 'package:flame/game.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -26,11 +28,12 @@ class _NoSave implements SaveRepository {
   Future<void> saveGameState(GameState state) async {}
 }
 
-/// Where the game canvas point [local] shows on screen: the map is tilted
-/// in 3D ([TiltedMap]), so this goes through the widget transforms.
-Offset _toScreen(WidgetTester tester, Offset local) => tester
-    .renderObject<RenderBox>(find.byType(GameWidget<WarGame>))
-    .localToGlobal(local);
+/// Where the game canvas point [local] shows on screen: the map is drawn
+/// tilted in 3D ([TiltedMap.toScreen]).
+Offset _toScreen(WidgetTester tester, Offset local) {
+  final box = tester.renderObject<RenderBox>(find.byType(TiltedMap));
+  return box.localToGlobal(TiltedMap.toScreen(local, box.size));
+}
 
 void main() {
   for (final (name, size) in [
@@ -135,6 +138,82 @@ void main() {
     await tap.up();
     await tester.pump(const Duration(milliseconds: 100));
     expect(container.read(selectedTerritoryProvider), own.id);
+  });
+
+  test('screen and canvas points map back and forth exactly', () {
+    const size = Size(400, 412);
+    for (final p in const [
+      Offset(0, 0),
+      Offset(200, 206),
+      Offset(400, 412),
+      Offset(37, 390),
+      Offset(380, 12),
+    ]) {
+      final back = TiltedMap.toCanvas(TiltedMap.toScreen(p, size), size);
+      expect((back - p).distance, lessThan(1e-6), reason: '$p');
+    }
+  });
+
+  testWidgets('zoomed in all the way, the map is still drawn everywhere '
+      '(not just the blue sky)', (tester) async {
+    final game = await _pumpGame(tester, const Size(400, 860), null);
+    // The game is drawn flat and only the finished picture is tilted: no
+    // 3D transform of the drawing itself (that made phones drop the whole
+    // map when zoomed in far).
+    final filter = find.descendant(
+      of: find.byType(TiltedMap),
+      matching: find.byType(ImageFiltered),
+    );
+    expect(filter, findsOneWidget);
+    expect(
+      find.descendant(of: filter, matching: find.byType(GameWidget<WarGame>)),
+      findsOneWidget,
+    );
+
+    final map = game.mapComponent.size;
+    final box = tester.renderObject<RenderBox>(find.byType(TiltedMap));
+    final mid = box.size.center(Offset.zero);
+    for (final zoom in [1.0, 4.0, WarGame.maxUserZoom]) {
+      game.zoomTo(zoom);
+      for (final at in [
+        Vector2(map.x * 0.5, map.y * 0.5),
+        Vector2(0, 0),
+        Vector2(map.x, map.y),
+        Vector2(map.x * 0.2, map.y * 0.8),
+      ]) {
+        game.camera.viewfinder.position = at;
+        game.panBy(Vector2.zero()); // keeps the view on the map
+        await tester.pump();
+        final image = await tester.runAsync(
+          () => captureImage(tester.element(find.byType(TiltedMap))),
+        );
+        final bytes = (await tester.runAsync(
+          () => image!.toByteData(format: ui.ImageByteFormat.rawRgba),
+        ))!;
+        // Colours just below the middle of the screen: the map there, not
+        // the sky.
+        final colours = <int>{};
+        for (var dx = -60; dx <= 60; dx += 12) {
+          for (var dy = 20; dy <= 120; dy += 20) {
+            final x = (mid.dx + dx).round();
+            final y = (mid.dy + dy).round();
+            final i = (y * image!.width + x) * 4;
+            final r = bytes.getUint8(i);
+            final g = bytes.getUint8(i + 1);
+            final b = bytes.getUint8(i + 2);
+            final sky = b > r + 40 && b > g + 10 && r < 120;
+            final sea = r < 20 && g < 40 && b < 70;
+            if (!sky || sea) colours.add(r << 16 | g << 8 | b);
+          }
+        }
+        image!.dispose();
+        expect(
+          colours.length,
+          greaterThan(3),
+          reason: 'zoom $zoom at $at: only sky on screen',
+        );
+      }
+    }
   });
 
   testWidgets('pinch zoom is clamped and keeps the map on screen', (

@@ -189,8 +189,7 @@ class MapComponent extends PositionComponent with HasGameReference<WarGame> {
     ..strokeJoin = StrokeJoin.round;
   static final Paint _selectedFill = Paint()..color = const Color(0x40FFD600);
   // Neighbours of the selected city glow softly (no white lines).
-  static final Paint _neighbourPaint = Paint()
-    ..color = const Color(0x40FFFFFF);
+  static final Paint _neighbourPaint = Paint()..color = const Color(0x40FFFFFF);
   static final Paint _abilityTargetPaint = Paint()
     ..color = const Color(0xFFFF6D00)
     ..style = PaintingStyle.stroke

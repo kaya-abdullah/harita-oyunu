@@ -273,6 +273,7 @@ class _PortraitLayout extends StatelessWidget {
             child: TiltedMap(
               child: MapGestureLayer(
                 game: game,
+                toCanvas: TiltedMap.toCanvas,
                 child: GameWidget(game: game),
               ),
             ),
@@ -312,6 +313,7 @@ class _SidePanelLayout extends StatelessWidget {
             child: TiltedMap(
               child: MapGestureLayer(
                 game: game,
+                toCanvas: TiltedMap.toCanvas,
                 child: GameWidget(game: game),
               ),
             ),

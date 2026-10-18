@@ -1,6 +1,8 @@
 /// The 3D view of the map ("oyunu 3D yap").
 library;
 
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/widgets.dart';
 
 /// Shows [child] (the game widget) as a land seen from an angle: it leans
@@ -8,8 +10,16 @@ import 'package:flutter/widgets.dart';
 /// gets smaller towards a sky on the horizon and the city buildings stand
 /// on it.
 ///
-/// Flutter maps pointer positions through the transform, so taps, drags
-/// and pinches inside the child keep working in map coordinates.
+/// The game is first drawn flat into a picture the size of the widget, and
+/// only that picture is tilted (an [ImageFilter.matrix]). Tilting the
+/// drawing itself (a [Transform]) went wrong on phones when zoomed in far:
+/// the map then reaches far past the screen, its near part ends up behind
+/// the eye of the perspective, and the GPU dropped everything — the screen
+/// showed only the blue sky.
+///
+/// A filter does not move pointer positions, so [toCanvas] turns a point
+/// on the screen into the game-canvas point shown there (and [toScreen]
+/// back).
 class TiltedMap extends StatelessWidget {
   const TiltedMap({super.key, required this.child});
 
@@ -36,6 +46,24 @@ class TiltedMap extends StatelessWidget {
       ..multiply(Matrix4.translationValues(-pivot.dx, -pivot.dy, 0));
   }
 
+  /// Where the game-canvas point [canvas] shows on the screen (relative to
+  /// this widget), for a widget [size] big.
+  static Offset toScreen(Offset canvas, Size size) =>
+      MatrixUtils.transformPoint(transformFor(size), canvas);
+
+  /// The game-canvas point shown at [screen] (relative to this widget), for
+  /// a widget [size] big — the exact inverse of [toScreen] on the flat
+  /// canvas.
+  static Offset toCanvas(Offset screen, Size size) {
+    // Only points on the canvas plane (z = 0) are shown, so drop z and
+    // invert what is left: a plain 2D perspective.
+    final inverse = Matrix4.tryInvert(
+      PointerEvent.removePerspectiveTransform(transformFor(size)),
+    );
+    if (inverse == null) return screen;
+    return MatrixUtils.transformPoint(inverse, screen);
+  }
+
   /// Sky colours, from the top of the screen down to the horizon.
   static const List<Color> sky = [Color(0xFF0B2A5B), Color(0xFF6FA8DC)];
 
@@ -52,7 +80,16 @@ class TiltedMap extends StatelessWidget {
               colors: sky,
             ),
           ),
-          child: Transform(transform: transformFor(size), child: child),
+          child: ImageFiltered(
+            imageFilter: ImageFilter.matrix(
+              transformFor(size).storage,
+              filterQuality: FilterQuality.medium,
+            ),
+            // Keeps the flat picture to the widget's own size: zoomed in,
+            // the map reaches far past it, and tilting all of that put
+            // parts behind the eye and wiped the whole picture.
+            child: ClipRect(child: child),
+          ),
         );
       },
     );

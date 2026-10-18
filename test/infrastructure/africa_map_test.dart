@@ -184,31 +184,38 @@ void main() {
     expect(w / h, closeTo(rect.width / rect.height, 0.01));
   });
 
-  test('seven start countries that never touch: you in Morocco, a bot '
-      'close by', () {
+  test('seven start countries: you in America in the middle, the six bots '
+      'all around it', () {
     expect(graph.startCities, hasLength(kMaxBots + 1));
     final countries = [
       for (final g in graph.startCities) graph.countryOf(g.first),
     ];
     expect(countries.toSet(), hasLength(kMaxBots + 1));
-    expect(countries.first, 'region_morocco');
+    expect(countries.first, 'region_america');
+    expect(graph.outlines.keys, isNot(contains('region_chad')));
     for (final g in graph.startCities) {
       // A whole country each.
       expect(g.toSet(), graph.citiesOf(graph.countryOf(g.first)).toSet());
     }
-    for (var a = 0; a < graph.startCities.length; a++) {
-      for (var b = a + 1; b < graph.startCities.length; b++) {
-        for (final id in graph.startCities[a]) {
-          for (final adj in graph.getById(id).adjacentIds) {
-            expect(graph.startCities[b], isNot(contains(adj)));
-          }
-        }
-      }
+    // America has four cities: Washington (a gold mine), New York, Chicago
+    // and Los Angeles.
+    expect(
+      graph.playerStartCities.map((id) => graph.getById(id).name).toSet(),
+      {'city_washington', 'city_new_york', 'city_chicago', 'city_los_angeles'},
+    );
+    expect(
+      graph.playerStartCities.where((id) => graph.getById(id).hasGoldMine),
+      hasLength(1),
+    );
+    // Every bot country borders America ("bot şehirler çok yakın").
+    final america = graph.playerStartCities.toSet();
+    for (final g in graph.startCities.skip(1)) {
+      expect(
+        g.any((id) => graph.getById(id).adjacentIds.any(america.contains)),
+        isTrue,
+        reason: graph.countryOf(g.first),
+      );
     }
-    // The first bot starts two steps from the player.
-    final dist = graph.distancesFrom(graph.playerStartCities);
-    final near = graph.startCities[1].map((id) => dist[id]).reduce(min);
-    expect(near, 2);
   });
 
   test('diamond mines are spread over the map', () {
@@ -237,7 +244,11 @@ void main() {
           own.map((t) => t.id).toSet(),
           graph.startCities[a.id.index].toSet(),
         );
-        expect(own.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
+        // America starts much stronger: it is surrounded by bots.
+        final units = a.id == ArmyId.army1
+            ? kPlayerStartUnitsPerCity
+            : kStartUnitsPerCity;
+        expect(own.every((t) => t.unitCount == units), isTrue);
         expect(a.diamondBalance, kStartDiamonds);
         expect(a.totalUnitPool, kStartUnitPool);
         expect(a.cards, kStartCards);

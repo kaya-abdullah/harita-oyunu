@@ -1,7 +1,7 @@
 // End-to-end test of the whole app as the player sees it: the bomb intro,
-// the menu, the new-game picker (3 bots, Zor), playing on the Africa map
-// (cards: hand, Kart Çek, folding panel, Fire Bomb; attack, shop), the
-// bots' turns, going back to the menu
+// the menu, a new game (no picker: America against six Orta bots), playing
+// on the tilted 3D Africa map (cards: hand, Kart Çek, folding panel, Fire
+// Bomb; attack, shop), the bots' turns, going back to the menu
 // and resuming the saved game.
 import 'dart:io';
 import 'dart:math';
@@ -109,19 +109,15 @@ void main() {
     await tester.tap(find.text('Atla'));
     await frames();
 
-    // ── 3. Picker: 3 bots, Zor ────────────────────────────────────────────
-    expect(find.text('Kaç bot oynasın?'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('bots_3')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('difficulty_hard')));
+    // ── 3. No bot picker ("bot seçme olmasın"): straight into the game ────
     await frames(10);
-
+    expect(find.text('Kaç bot oynasın?'), findsNothing);
     expect(find.byType(GameScreen), findsOneWidget);
     var state = container.read(gameProvider);
-    expect(state.armies, hasLength(4));
-    expect(state.difficulty, AiDifficulty.hard);
+    expect(state.armies, hasLength(kMaxBots + 1));
+    expect(state.difficulty, AiDifficulty.medium);
     expect(state.territories, hasLength(kTerritoryCount));
-    for (final id in ArmyId.values.take(4)) {
+    for (final id in ArmyId.values) {
       expect(find.byKey(Key('army_chip_${id.name}')), findsOneWidget);
     }
     // The card panel: every card (the new Atom Bomb, Nuclear Bomb and Haraç
@@ -160,15 +156,23 @@ void main() {
     final game = tester
         .widget<GameWidget<WarGame>>(find.byType(GameWidget<WarGame>))
         .game!;
-    final origin = tester.getTopLeft(find.byType(GameWidget<WarGame>));
+    // The map is tilted in 3D: canvas points go through the widget
+    // transforms to find where they show on screen.
+    final canvas = tester.renderObject<RenderBox>(
+      find.byType(GameWidget<WarGame>),
+    );
     Future<void> tapCity(int id) async {
       final p = game.mapComponent.graph.positionOf(id).offset;
+      // Bring the city into the middle of the view first (the tilted map
+      // shows less at its near corners).
+      game.camera.viewfinder.position = Vector2(p.dx, p.dy);
+      await tester.pump();
       final s = game.camera.localToGlobal(Vector2(p.dx, p.dy));
-      await tester.tapAt(origin + Offset(s.x, s.y));
+      await tester.tapAt(canvas.localToGlobal(Offset(s.x, s.y)));
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    // The map opens zoomed in on Morocco; centre the first city.
+    // The map opens zoomed in on America; centre the first city.
     expect(game.userZoom, WarGame.startZoom);
     final start =
         state.territories[game.mapComponent.graph.playerStartCities.first];
@@ -180,11 +184,11 @@ void main() {
     );
     await tester.pump();
 
-    // Every city of Morocco is ours with 60 soldiers; every other city
+    // Every city of America is ours with 150 soldiers; every other city
     // holds 50–70 soldiers (no empty land).
     for (final t in state.territories) {
       if (t.ownerArmyId == ArmyId.army1) {
-        expect(t.unitCount, kStartUnitsPerCity);
+        expect(t.unitCount, kPlayerStartUnitsPerCity);
       } else if (t.ownerArmyId == null) {
         expect(
           t.unitCount,
@@ -194,15 +198,15 @@ void main() {
     }
 
     // ── 4. Attack: select an own border city, add the reserve, then tap a
-    //       neutral neighbour ─────────────────────────────────────────────
+    //       neighbour (all of America's neighbours are bot cities) ────────
     final (src, dst) = _border(state);
     await tapCity(src);
     expect(container.read(selectedTerritoryProvider), src);
     // The info panel names the city and its country.
-    expect(find.textContaining(' · Fas'), findsOneWidget);
+    expect(find.textContaining(' · Amerika'), findsOneWidget);
     await tapCity(src); // deploys the 20 reserve soldiers
     state = container.read(gameProvider);
-    expect(state.territories[src].unitCount, kStartUnitsPerCity + 20);
+    expect(state.territories[src].unitCount, kPlayerStartUnitsPerCity + 20);
     final defenders = state.territories[dst].unitCount;
     await tapCity(dst);
     state = container.read(gameProvider);
@@ -210,7 +214,7 @@ void main() {
     // Soldier for soldier: the winners keep the difference.
     expect(
       state.territories[dst].unitCount,
-      kStartUnitsPerCity + 20 - 1 - defenders,
+      kPlayerStartUnitsPerCity + 20 - 1 - defenders,
     );
 
     // ── 5. Fire Bomb card: kills 30 soldiers in a neighbouring city ───────
@@ -244,8 +248,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.close_rounded));
     await frames();
 
-    // ── 7. End the turn: all three bots play, then it is our turn again ───
+    // ── 7. End the turn: all six bots play, then it is our turn again ─────
     final diamonds = state.army1.diamondBalance;
+    final ownersBefore = [for (final t in state.territories) t.ownerArmyId];
     await tester.tap(find.text('Turu Bitir'));
     await tester.pump();
     expect(container.read(gameProvider.notifier).isHumanTurn, isFalse);
@@ -259,14 +264,13 @@ void main() {
     // Income was paid (a bot may have taken some with Haraç Kes).
     expect(
       state.army1.diamondBalance,
-      greaterThanOrEqualTo(diamonds + 80 - kTributeDiamonds * 3),
+      greaterThanOrEqualTo(diamonds + 80 - kTributeDiamonds * kMaxBots),
     );
     expect(state.army1.hasDrawnCard, isFalse, reason: 'a new free card');
-    // The bots played (and fought each other): some of them grew.
-    expect(
-      state.armies.skip(1).any((b) => state.tilesOwnedBy(b.id) > 4),
-      isTrue,
-    );
+    // The bots played: cities changed hands.
+    expect([
+      for (final t in state.territories) t.ownerArmyId,
+    ], isNot(ownersBefore));
     expect(repo.saved?.currentTurn, 2);
 
     // ── 8. Back to the menu and resume ────────────────────────────────────
@@ -279,7 +283,7 @@ void main() {
     expect(find.byType(GameScreen), findsOneWidget);
     state = container.read(gameProvider);
     expect(state.currentTurn, 2);
-    expect(state.armies, hasLength(4));
+    expect(state.armies, hasLength(kMaxBots + 1));
   });
 }
 

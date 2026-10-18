@@ -119,6 +119,11 @@ class WarGame extends FlameGame {
     panBy(focal - moved);
   }
 
+  /// A tap at [canvasPoint] (a position on the game canvas): selects,
+  /// attacks or plays a card on the city there.
+  void tapAt(Vector2 canvasPoint) =>
+      mapComponent.tapAt(camera.globalToLocal(canvasPoint));
+
   /// Pans the camera by [screenDelta] pixels.
   void panBy(Vector2 screenDelta) {
     camera.viewfinder.position -= screenDelta / camera.viewfinder.zoom;

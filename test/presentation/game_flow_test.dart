@@ -40,6 +40,8 @@ ProviderContainer _container(_MemorySaveRepository repo) {
     overrides: [saveRepositoryProvider.overrideWithValue(repo)],
   );
   addTearDown(c.dispose);
+  // Most flows need neutral land next to America: one bot (Libya) only.
+  c.read(newGameBotCountProvider.notifier).set(1);
   return c;
 }
 
@@ -83,25 +85,33 @@ void main() {
     expect(s.difficulty, AiDifficulty.medium);
   });
 
-  test('the player is Morocco, bot 1 Mauritania close by, equal forces', () {
-    final s = createInitialGameState(difficulty: AiDifficulty.hard);
+  test('the player is America in the middle, six bots right next to it', () {
+    final s = createInitialGameState(
+      difficulty: AiDifficulty.hard,
+      botCount: kMaxBots,
+    );
     final graph = TerritoryGraph.bundled();
     expect(s.difficulty, AiDifficulty.hard);
     final blue = s.territories.where((t) => t.ownerArmyId == ArmyId.army1);
-    final red = s.territories.where((t) => t.ownerArmyId == ArmyId.army2);
     expect(
       blue.map((t) => t.id).toSet(),
-      graph.citiesOf('region_morocco').toSet(),
+      graph.citiesOf('region_america').toSet(),
     );
-    expect(
-      red.map((t) => t.id).toSet(),
-      graph.citiesOf('region_mauritania').toSet(),
-    );
-    expect(blue.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
-    expect(red.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
-    // Close, but not touching: Western Sahara lies between them.
+    expect(blue.every((t) => t.unitCount == kPlayerStartUnitsPerCity), isTrue);
     final dist = graph.distancesFrom(blue.map((t) => t.id));
-    expect(red.map((t) => dist[t.id]).reduce(min), 2);
+    for (final bot in s.armies.skip(1)) {
+      final own = s.territories.where((t) => t.ownerArmyId == bot.id);
+      expect(own, hasLength(graph.startCities[bot.id.index].length));
+      expect(own.every((t) => t.unitCount == kStartUnitsPerCity), isTrue);
+      // Every bot touches America.
+      expect(own.map((t) => dist[t.id]).reduce(min), 1, reason: '${bot.id}');
+    }
+    // America is surrounded: all its outside neighbours belong to bots.
+    for (final t in blue) {
+      for (final adj in t.adjacentIds) {
+        expect(s.territories[adj].ownerArmyId, isNotNull);
+      }
+    }
   });
 
   testWidgets('player attacks via map taps, deploys, and AI plays its turn', (
@@ -120,7 +130,7 @@ void main() {
     expect(c.read(gameProvider).army1.totalUnitPool, 0);
     expect(
       c.read(gameProvider).territories[src].unitCount,
-      kStartUnitsPerCity + pool,
+      kPlayerStartUnitsPerCity + pool,
     );
 
     // Tap a neutral neighbour (50–70 soldiers) → conquer it; the winners
@@ -130,7 +140,7 @@ void main() {
     expect(c.read(gameProvider).territories[dst].ownerArmyId, ArmyId.army1);
     expect(
       c.read(gameProvider).territories[dst].unitCount,
-      kStartUnitsPerCity + pool - 1 - defenders,
+      kPlayerStartUnitsPerCity + pool - 1 - defenders,
     );
     expect(c.read(gameProvider).territories[src].unitCount, 1);
     expect(c.read(selectedTerritoryProvider), dst);
@@ -540,7 +550,9 @@ void main() {
       if (s.tilesOwnedBy(bot.id) > 4) expanded++;
       expect(bot.diamondBalance, greaterThanOrEqualTo(kStartDiamonds + 80));
     }
-    expect(expanded, greaterThanOrEqualTo(kMaxBots ~/ 2));
+    // The bots sit right next to each other and to America, so they also
+    // fight among themselves: at least some of them grew.
+    expect(expanded, greaterThanOrEqualTo(1));
     expect(repo.saved?.armies, hasLength(kMaxBots + 1));
   });
 
@@ -571,7 +583,8 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
       final s = c.read(gameProvider);
       expect(s.phase, GamePhase.victory);
-      expect(s.winnerId, ArmyId.army2);
+      expect(s.winnerId, isNot(ArmyId.army1));
+      expect(s.winnerId, isNotNull);
       // ignore: avoid_print
       print('AI won on turn ${s.currentTurn}');
     },

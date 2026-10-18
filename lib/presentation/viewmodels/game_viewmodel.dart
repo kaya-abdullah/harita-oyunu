@@ -88,7 +88,7 @@ final newGameDifficultyProvider =
 /// Holds how many bots (1 … [kMaxBots]) join the next new game.
 class NewGameBotCountNotifier extends Notifier<int> {
   @override
-  int build() => 1;
+  int build() => kMaxBots;
 
   /// Sets the bot count used by the next [GameNotifier.build].
   void set(int count) => state = count.clamp(1, kMaxBots);
@@ -675,10 +675,10 @@ final isVictoryProvider = Provider<bool>(
 
 /// Constructs the [GameState] for a brand-new game on the Africa city map.
 ///
-/// Army 1 (human, blue) owns Morocco ("kendisi ülke olsun"): all its cities,
-/// [kStartUnitsPerCity] soldiers in each. The [botCount] bots (1 …
-/// [kMaxBots]) own the next start countries of the map — the first one,
-/// Mauritania, close to the player. Every other city is neutral and holds
+/// Army 1 (human, blue) owns America, in the middle of Africa ("Amerika biz
+/// olalım"): all its four cities, [kPlayerStartUnitsPerCity] soldiers in each. The
+/// [botCount] bots (1 … [kMaxBots]) own the next start countries of the map,
+/// which all border America. Every other city is neutral and holds
 /// [kNeutralCityMinUnits] … [kNeutralCityMaxUnits] soldiers (picked with
 /// [random]), so there is no empty land.
 ///
@@ -703,7 +703,9 @@ GameState createInitialGameState({
   final territories = [
     for (final t in graph.territories)
       t.copyWith(
-        unitCount: owner[t.id] != null
+        unitCount: owner[t.id] == ArmyId.army1
+            ? kPlayerStartUnitsPerCity
+            : owner[t.id] != null
             ? kStartUnitsPerCity
             : kNeutralCityMinUnits +
                   rng.nextInt(kNeutralCityMaxUnits - kNeutralCityMinUnits + 1),

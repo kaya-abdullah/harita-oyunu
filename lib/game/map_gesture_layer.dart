@@ -11,9 +11,10 @@ import 'package:harita/game/war_game.dart';
 /// one finger drags the map, two fingers pinch-zoom around the point between
 /// them, and a mouse wheel zooms around the cursor.
 ///
-/// A [Listener] takes no part in the gesture arena, so taps on the map
-/// (select, attack, play a card) still reach the game; a finger that moves
-/// further than [panSlop] pans instead of tapping. This does not depend on
+/// A finger that goes down and up without moving further than [panSlop]
+/// (and without a second finger) is a tap on the map — select, attack,
+/// play a card — passed to [WarGame.tapAt]. The pointer positions a
+/// [Listener] receives are exact even on the tilted 3D map. This does not depend on
 /// Flame's scale events, which skip one-finger drags unless the game also
 /// has drag listeners.
 class MapGestureLayer extends StatefulWidget {
@@ -36,6 +37,7 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
   final Map<int, Offset> _pointers = {};
   Offset? _downAt;
   bool _panning = false;
+  bool _maybeTap = false;
   double _pinchStartDistance = 0;
   double _pinchStartZoom = 1;
 
@@ -61,8 +63,10 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
     if (_pointers.length == 1) {
       _downAt = e.localPosition;
       _panning = false;
-    } else if (_pointers.length == 2) {
-      _startPinch();
+      _maybeTap = true;
+    } else {
+      _maybeTap = false;
+      if (_pointers.length == 2) _startPinch();
     }
   }
 
@@ -75,6 +79,7 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
       if (!_panning &&
           (e.localPosition - start).distance > MapGestureLayer.panSlop) {
         _panning = true;
+        _maybeTap = false;
       }
       if (_panning) {
         final d = e.localPosition - old;
@@ -102,6 +107,10 @@ class _MapGestureLayerState extends State<MapGestureLayer> {
 
   void _onUp(PointerEvent e) {
     _pointers.remove(e.pointer);
+    if (_maybeTap && e is PointerUpEvent && _pointers.isEmpty && _ready) {
+      _game.tapAt(Vector2(e.localPosition.dx, e.localPosition.dy));
+    }
+    _maybeTap = false;
     if (_pointers.length >= 2) {
       _startPinch();
     } else if (_pointers.length == 1) {

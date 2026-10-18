@@ -1,6 +1,6 @@
 /// Main menu screen for Harita: Kendi İmparatorluğunu Kur.
 ///
-/// Displays the app title, New Game (→ bot count + difficulty picker), Resume (if save exists), Language toggle
+/// Displays the app title, New Game (6 bots on Orta, no picker), Resume (if save exists), Language toggle
 /// (TR / EN), and Tutorial buttons.
 ///
 /// Requirements: 2.1, 2.2, 2.3, 9.2, 12.2, 11.1, 11.3
@@ -10,15 +10,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/audio_service.dart';
+import 'package:harita/core/constants.dart';
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/localization/locale_service.dart';
 import 'package:harita/core/theme/app_theme.dart';
+import 'package:harita/domain/models/ai_difficulty.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/tutorial_viewmodel.dart';
 import 'package:harita/presentation/screens/game_screen.dart';
 import 'package:harita/presentation/screens/tutorial_screen.dart';
-import 'package:harita/presentation/widgets/common/difficulty_picker.dart';
 
 /// Provider that exposes whether a saved game currently exists.
 ///
@@ -182,21 +183,11 @@ class MainMenuScreen extends ConsumerWidget {
       if (!context.mounted) return;
     }
 
-    // Let the player choose how many bots play and how strong they are.
-    final strings = ref
-        .read(localeServiceProvider)
-        .value
-        ?.of(ref.read(localeProvider));
-    if (strings == null) return;
-    final choice = await showNewGamePicker(
-      context,
-      strings,
-      initialBots: ref.read(newGameBotCountProvider),
-    );
-    if (choice == null || !context.mounted) return;
+    // No bot picker ("bot seçme olmasın"): every new game has the full
+    // set of bots, playing on Orta.
     ref.read(audioServiceProvider).playSfx(AudioService.sfxButtonTap);
-    ref.read(newGameDifficultyProvider.notifier).set(choice.difficulty);
-    ref.read(newGameBotCountProvider.notifier).set(choice.bots);
+    ref.read(newGameDifficultyProvider.notifier).set(AiDifficulty.medium);
+    ref.read(newGameBotCountProvider.notifier).set(kMaxBots);
 
     // Reset to a fresh game state by rebuilding the notifiers.
     ref.invalidate(gameProvider);

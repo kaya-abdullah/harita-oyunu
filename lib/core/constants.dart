@@ -23,6 +23,10 @@ const int kNeutralCityMaxUnits = 70;
 /// Soldiers in each city of an army's start country.
 const int kStartUnitsPerCity = 60;
 
+/// Soldiers in each city of the player's America at game start: America is
+/// surrounded by six bots, so it starts much stronger than a bot country.
+const int kPlayerStartUnitsPerCity = 150;
+
 /// Reserve soldiers every army starts with.
 const int kStartUnitPool = 20;
 

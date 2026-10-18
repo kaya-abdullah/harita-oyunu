@@ -10,10 +10,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:harita/core/localization/app_localizations.dart';
 import 'package:harita/core/theme/app_theme.dart';
+import 'package:harita/domain/models/ai_difficulty.dart';
 import 'package:harita/domain/models/army.dart';
 import 'package:harita/presentation/viewmodels/game_viewmodel.dart';
 import 'package:harita/presentation/viewmodels/locale_viewmodel.dart';
-import 'package:harita/presentation/widgets/common/difficulty_picker.dart';
 
 /// Shows "Turn: X" and "Active Army: [coloured dot] Name" in the HUD.
 ///
@@ -49,7 +49,7 @@ class TurnIndicator extends ConsumerWidget {
               Tooltip(
                 message:
                     '${strings.difficultyLabel}: '
-                    '${difficultyName(gameState.difficulty, strings)}',
+                    '${_difficultyName(gameState.difficulty, strings)}',
                 child: _TurnChip(label: '${strings.turnLabel} $currentTurn'),
               ),
 
@@ -185,3 +185,10 @@ class _ActiveArmyIndicator extends StatelessWidget {
     );
   }
 }
+
+/// Localised name of a bot difficulty.
+String _difficultyName(AiDifficulty d, AppStrings t) => switch (d) {
+  AiDifficulty.veryEasy => t.difficultyVeryEasy,
+  AiDifficulty.medium => t.difficultyMedium,
+  AiDifficulty.hard => t.difficultyHard,
+};

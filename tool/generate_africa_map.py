@@ -117,11 +117,14 @@ COUNTRY_CITIES = OrderedDict([
         (7.99, 16.97, "Agadez", "Agadez", ""),
         (12.92, 18.69, "Bilma", "Bilma", ""),
     ]),
-    ("chad", [
-        (15.04, 12.13, "Encamena", "N'Djamena", ""),
-        (19.1, 17.92, "Faya", "Faya", ""),
-        (20.83, 13.83, "Abeşe", "Abeche", ""),
-        (18.39, 9.14, "Sarh", "Sarh", ""),
+    # "Ortaya Amerika ekle, Amerika biz olalım": the country in the middle
+    # of Africa (Chad's land) is the player's America, with four American
+    # cities.
+    ("america", [
+        (15.04, 12.13, "Vaşington", "Washington", "gold"),
+        (19.1, 17.92, "Şikago", "Chicago", ""),
+        (20.83, 13.83, "New York", "New York", ""),
+        (18.39, 9.14, "Los Angeles", "Los Angeles", ""),
     ]),
     ("sudan", [
         (32.53, 15.59, "Hartum", "Khartoum", "gold"),
@@ -347,12 +350,12 @@ COUNTRY_CITIES = OrderedDict([
     ]),
 ])
 
-# Start countries, in the order players are added: you (Morocco), then
-# bot 1 … bot 6. Bot 1 starts close to you ("yakınlarında bot şehirler");
-# no two start countries share a border.
+# Start countries, in the order players are added: you (America, in the
+# middle), then bot 1 … bot 6 all around it — "bot şehirler çok yakın olsun
+# birbirine": every bot country borders America and its bot neighbours.
 START_COUNTRIES = [
-    "morocco", "mauritania", "tunisia", "niger", "egypt", "south_africa",
-    "kenya",
+    "america", "libya", "sudan", "central_africa", "cameroon", "nigeria",
+    "niger",
 ]
 
 # Diamond mines: real diamond fields. Each marks the city area it lies in.
@@ -377,6 +380,7 @@ MINES = [
 def main():
     geo = json.load(open(os.path.join(ROOT, "tool/data/africa_geo.json")))
     country_rings = geo["countries"]
+    country_rings["america"] = country_rings.pop("chad")
     assert set(country_rings) == set(COUNTRY_CITIES), (
         set(country_rings) ^ set(COUNTRY_CITIES))
     rings = [ring for rs in country_rings.values() for ring in rs]
@@ -471,10 +475,9 @@ def main():
     country_of = [c[5] for c in cities]
     for x, gx in enumerate(starts):
         assert connected_within(adjacency, gx), START_COUNTRIES[x]
-        for y, gy in enumerate(starts):
-            if x < y:
-                touching = any(b in adjacency[a] for a in gx for b in gy)
-                assert not touching, (START_COUNTRIES[x], START_COUNTRIES[y])
+        if x > 0:
+            touching = any(b in adjacency[a] for a in gx for b in starts[0])
+            assert touching, (START_COUNTRIES[x], "does not border America")
 
     # ── Satellite picture (only re-cut when a Blue Marble path is given) ──
     if len(sys.argv) > 1:

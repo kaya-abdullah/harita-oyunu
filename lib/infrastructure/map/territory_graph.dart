@@ -124,8 +124,7 @@ class TerritoryGraph {
   final double tileSize;
 
   /// Start countries (their cities) in army order: the human player first
-  /// (Morocco), then bot 1 (Mauritania, close to the player), bot 2 … bot 6.
-  /// No two of them share a border.
+  /// (America, in the middle of Africa), then bot 1 … bot 6 all around it.
   final List<List<int>> startCities;
 
   /// Real country outlines (Natural Earth) in map world units, keyed by

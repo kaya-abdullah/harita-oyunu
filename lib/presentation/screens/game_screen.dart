@@ -23,6 +23,7 @@ import 'package:harita/domain/models/army.dart';
 import 'package:harita/domain/models/game_state.dart';
 import 'package:harita/domain/models/special_ability.dart';
 import 'package:harita/game/map_gesture_layer.dart';
+import 'package:harita/game/tilted_map.dart';
 import 'package:harita/game/war_game.dart';
 import 'package:harita/presentation/screens/main_menu_screen.dart';
 import 'package:harita/presentation/screens/victory_screen.dart';
@@ -269,9 +270,11 @@ class _PortraitLayout extends StatelessWidget {
         Expanded(
           flex: 5,
           child: ClipRect(
-            child: MapGestureLayer(
-              game: game,
-              child: GameWidget(game: game),
+            child: TiltedMap(
+              child: MapGestureLayer(
+                game: game,
+                child: GameWidget(game: game),
+              ),
             ),
           ),
         ),
@@ -306,9 +309,11 @@ class _SidePanelLayout extends StatelessWidget {
       children: [
         Expanded(
           child: ClipRect(
-            child: MapGestureLayer(
-              game: game,
-              child: GameWidget(game: game),
+            child: TiltedMap(
+              child: MapGestureLayer(
+                game: game,
+                child: GameWidget(game: game),
+              ),
             ),
           ),
         ),
